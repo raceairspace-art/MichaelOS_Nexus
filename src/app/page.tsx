@@ -173,7 +173,7 @@ export default function Home() {
       if (type.includes("input_audio_buffer.speech_started")) setVoiceState("listening");
       if (type.includes("input_audio_buffer.speech_stopped")) setVoiceState("thinking");
       if (type === "response.created") setVoiceState("thinking");
-      if (type === "response.done" && voiceState !== "speaking") setVoiceState("listening");
+      if (type === "response.done") setVoiceState((current) => current === "speaking" ? current : "listening");
 
       if (type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
         setTranscript((current) => [...current, makeEntry("user", event.transcript.trim(), "voice")]);
@@ -207,7 +207,6 @@ export default function Home() {
     setVoiceState("connecting");
 
     try {
-      // Prime the exact speech path that we proved manually in Chrome.
       window.speechSynthesis.cancel();
       const prime = new SpeechSynthesisUtterance(" ");
       prime.volume = 0;
@@ -370,4 +369,29 @@ export default function Home() {
                 <p>{entry.text}</p>
               </div>
             ))}
-            {textLoading && <div className="thinking"><Sparkles size
+            {textLoading && <div className="thinking"><Sparkles size={15} /> Nexus is thinking with the workspace in view…</div>}
+          </div>
+
+          <form className="composer" onSubmit={onSubmit}>
+            <label><span className="context-pill"><Eye size={11} /> {sectionLabels[selectedSection]}</span>Text is secondary; voice is primary.</label>
+            <div className="composer-row">
+              <textarea
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder="Ask Nexus about what you’re working on…"
+                rows={2}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void sendText(input);
+                  }
+                }}
+              />
+              <button type="submit" disabled={!input.trim() || textLoading} aria-label="Send"><ArrowUp size={18} /></button>
+            </div>
+          </form>
+        </aside>
+      </div>
+    </main>
+  );
+}
