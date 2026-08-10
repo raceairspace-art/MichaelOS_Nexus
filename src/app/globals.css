@@ -1,5 +1,3 @@
-@import "tailwindcss";
-
 :root {
   --bg: #090b0e;
   --panel: #101318;
@@ -19,7 +17,6 @@ html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--te
 body { font-family: Arial, Helvetica, sans-serif; }
 button, textarea { font: inherit; }
 button { color: inherit; }
-
 .nexus-shell { min-height: 100vh; background: radial-gradient(circle at 38% 0%, rgba(217,182,122,.045), transparent 34%), var(--bg); }
 .topbar { height: 72px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: rgba(9,11,14,.92); backdrop-filter: blur(18px); }
 .brand { display: flex; align-items: center; gap: 12px; }
@@ -29,12 +26,10 @@ button { color: inherit; }
 .brand small { color: var(--muted); margin-top: 3px; font-size: 11px; }
 .presence { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 8px; }
 .presence-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(119,198,155,.08); }
-
 .context-strip { min-height: 38px; display: flex; align-items: center; gap: 22px; padding: 0 24px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; overflow-x: auto; white-space: nowrap; }
 .context-strip div { display: flex; gap: 7px; align-items: center; color: var(--soft); }
 .context-strip strong { color: var(--text); font-weight: 600; }
 .context-strip .saved { margin-left: auto; display: flex; gap: 5px; color: var(--green); align-items: center; }
-
 .workspace-layout { min-height: calc(100vh - 110px); display: grid; grid-template-columns: minmax(0,1fr) 390px; }
 .workspace { min-width: 0; padding: 34px 38px 38px; }
 .workspace-heading { max-width: 1040px; margin: 0 auto 24px; display: flex; justify-content: space-between; align-items: flex-end; gap: 30px; }
@@ -42,15 +37,13 @@ button { color: inherit; }
 .workspace-heading h1 { margin: 8px 0 8px; font-size: clamp(30px, 4vw, 46px); line-height: 1; letter-spacing: -.035em; font-weight: 620; }
 .workspace-heading p { margin: 0; max-width: 620px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .workspace-save { display: flex; gap: 7px; align-items: center; color: var(--muted); font-size: 11px; white-space: nowrap; }
-
 .document-shell { max-width: 1040px; height: calc(100vh - 235px); min-height: 500px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0,1fr); border: 1px solid var(--line); border-radius: 18px; background: rgba(16,19,24,.7); box-shadow: 0 24px 60px rgba(0,0,0,.22); overflow: hidden; }
 .section-nav { padding: 18px 10px; border-right: 1px solid var(--line); background: rgba(255,255,255,.014); overflow-y: auto; }
-.section-nav button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; background: transparent; color: var(--muted); padding: 12px 12px; border-radius: 10px; cursor: pointer; text-align: left; font-size: 12px; transition: .18s ease; }
+.section-nav button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; background: transparent; color: var(--muted); padding: 12px; border-radius: 10px; cursor: pointer; text-align: left; font-size: 12px; transition: .18s ease; }
 .section-nav button:hover { background: rgba(255,255,255,.04); color: var(--soft); }
 .section-nav button.active { background: var(--accent-soft); color: var(--text); }
 .section-nav button svg { color: transparent; flex: 0 0 auto; }
 .section-nav button.active svg { color: var(--accent); }
-
 .editor { min-width: 0; display: flex; flex-direction: column; padding: 28px 30px 18px; }
 .editor-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
 .editor-meta span { font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
@@ -58,7 +51,6 @@ button { color: inherit; }
 .editor textarea { width: 100%; flex: 1; resize: none; border: 0; outline: 0; color: #e8e8e4; background: transparent; padding: 24px 2px; font-size: 15px; line-height: 1.8; }
 .editor textarea::selection { background: rgba(217,182,122,.23); }
 .editor-foot { padding-top: 14px; border-top: 1px solid var(--line); color: #767d87; font-size: 10px; line-height: 1.4; }
-
 .collaborator { min-width: 0; height: calc(100vh - 110px); display: flex; flex-direction: column; border-left: 1px solid var(--line); background: rgba(14,17,21,.96); }
 .collaborator-head { min-height: 68px; padding: 14px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
 .ai-avatar { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: var(--accent); background: var(--accent-soft); border: 1px solid rgba(217,182,122,.18); }
@@ -73,7 +65,6 @@ button { color: inherit; }
 .voice-status.state-speaking i { background: #9b8cff; animation: pulse .7s infinite; }
 .voice-status.state-error i { background: #e87f7f; }
 @keyframes pulse { 50% { opacity: .35; } }
-
 .voice-zone { margin: 16px; padding: 14px; min-height: 78px; border: 1px solid var(--line-strong); border-radius: 15px; background: linear-gradient(135deg, rgba(217,182,122,.07), rgba(255,255,255,.02)); display: flex; align-items: center; gap: 12px; }
 .voice-button { width: 48px; height: 48px; flex: 0 0 auto; border-radius: 50%; border: 1px solid rgba(217,182,122,.32); background: var(--accent); color: #17120b; display: grid; place-items: center; cursor: pointer; box-shadow: 0 10px 28px rgba(217,182,122,.12); }
 .voice-button:hover { transform: translateY(-1px); }
@@ -84,7 +75,6 @@ button { color: inherit; }
 .voice-zone span { color: var(--muted); font-size: 10px; line-height: 1.4; margin-top: 4px; }
 .wave-icon { color: var(--accent); margin-left: auto; animation: pulse .8s infinite; }
 .voice-error { margin: -6px 16px 10px; padding: 9px 10px; color: #f2aaaa; background: rgba(232,127,127,.08); border-radius: 9px; font-size: 10px; }
-
 .transcript { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 16px 18px; }
 .empty-thread { margin: 24px 8px; padding: 20px; border: 1px dashed var(--line-strong); border-radius: 14px; color: var(--muted); }
 .empty-thread svg { color: var(--accent); margin-bottom: 12px; }
@@ -98,7 +88,6 @@ button { color: inherit; }
 .message p { margin: 0; color: #d7dadc; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
 .thinking { display: flex; gap: 8px; align-items: center; color: var(--muted); padding: 14px 0; font-size: 10px; }
 .thinking svg { color: var(--accent); animation: pulse 1s infinite; }
-
 .composer { padding: 12px 14px 14px; border-top: 1px solid var(--line); background: #101318; }
 .composer label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 2px 8px; color: #6f7680; font-size: 9px; }
 .context-pill { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
@@ -107,7 +96,6 @@ button { color: inherit; }
 .composer textarea::placeholder { color: #626872; }
 .composer button { width: 32px; height: 32px; border: 0; border-radius: 9px; background: var(--accent); color: #18130c; display: grid; place-items: center; cursor: pointer; }
 .composer button:disabled { opacity: .3; cursor: default; }
-
 @media (max-width: 900px) {
   .topbar { height: 62px; padding: 0 15px; }
   .presence { display: none; }
@@ -127,7 +115,6 @@ button { color: inherit; }
   .editor textarea { font-size: 14px; line-height: 1.65; padding: 18px 0; }
   .collaborator { height: 70vh; min-height: 540px; border-left: 0; border-top: 1px solid var(--line); }
 }
-
 @media (max-width: 520px) {
   .brand small { display: none; }
   .context-strip span:not(.saved) { display: none; }
