@@ -32,11 +32,8 @@ const requestSchema = z.object({
 
 function safeOpenAIError(status: number, body: string) {
   let detail = "OpenAI rejected the realtime session request.";
-
   try {
-    const parsed = JSON.parse(body) as {
-      error?: { message?: string; code?: string; type?: string; param?: string | null };
-    };
+    const parsed = JSON.parse(body) as { error?: { message?: string; code?: string } };
     const message = parsed.error?.message?.trim();
     const code = parsed.error?.code?.trim();
     if (message) detail = message;
@@ -44,7 +41,6 @@ function safeOpenAIError(status: number, body: string) {
   } catch {
     if (body.trim() && body.length < 500) detail = body.trim();
   }
-
   return {
     error: `OpenAI realtime error ${status}: ${detail}`,
     openAIStatus: status,
@@ -79,10 +75,10 @@ export async function POST(request: Request) {
             turn_detection: {
               type: "server_vad",
               create_response: true,
-              interrupt_response: false,
+              interrupt_response: true,
               threshold: 0.5,
               prefix_padding_ms: 300,
-              silence_duration_ms: 700,
+              silence_duration_ms: 600,
             },
           },
           output: { voice: process.env.OPENAI_VOICE || "marin" },
