@@ -135,21 +135,17 @@ export default function Home() {
   function speakResponse(text: string) {
     if (!text.trim() || !("speechSynthesis" in window)) return;
 
-    window.speechSynthesis.cancel();
+    // Intentionally mirror the exact browser behavior that worked in DevTools:
+    // use Chrome/Windows' default voice with no explicit voice selection.
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1;
     utterance.pitch = 1;
     utterance.volume = 1;
 
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find((voice) => voice.lang.toLowerCase().startsWith("en-us"))
-      ?? voices.find((voice) => voice.lang.toLowerCase().startsWith("en"));
-    if (preferred) utterance.voice = preferred;
-
     utterance.onstart = () => {
       streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = false; });
       setVoiceState("speaking");
-      setAudioStatus(`Speaking with ${utterance.voice?.name || "browser voice"}`);
+      setAudioStatus("Speaking with browser default voice");
     };
     utterance.onend = () => {
       streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = true; });
@@ -207,11 +203,6 @@ export default function Home() {
     setVoiceState("connecting");
 
     try {
-      window.speechSynthesis.cancel();
-      const prime = new SpeechSynthesisUtterance(" ");
-      prime.volume = 0;
-      window.speechSynthesis.speak(prime);
-
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
