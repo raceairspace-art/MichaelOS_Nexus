@@ -1,33 +1,11 @@
 import { z } from "zod";
-import { contextInstructions, sectionKeys } from "@/lib/nexus";
+import { contextInstructions, type WorkspaceContext } from "@/lib/nexus";
 
 export const maxDuration = 30;
 
-const transcriptSchema = z.object({
-  id: z.string(),
-  role: z.enum(["user", "assistant"]),
-  text: z.string().max(4000),
-  createdAt: z.string(),
-  mode: z.enum(["voice", "text"]),
-});
-
-const workspaceSchema = z.object({
-  projectId: z.literal("digital-oliver"),
-  projectName: z.literal("Digital Oliver"),
-  updatedAt: z.string(),
-  sections: z.record(z.enum(sectionKeys), z.string().max(12000)),
-});
-
 const requestSchema = z.object({
   sdp: z.string().min(1),
-  context: z.object({
-    activeProject: z.string(),
-    currentWorkspaceObject: z.string(),
-    selectedSection: z.enum(sectionKeys),
-    visibleContent: z.string().max(12000),
-    workspace: workspaceSchema,
-    recentConversation: z.array(transcriptSchema).max(12),
-  }),
+  context: z.record(z.string(), z.unknown()),
 });
 
 function safeOpenAIError(status: number, body: string) {
@@ -41,11 +19,7 @@ function safeOpenAIError(status: number, body: string) {
   } catch {
     if (body.trim() && body.length < 500) detail = body.trim();
   }
-  return {
-    error: `OpenAI realtime error ${status}: ${detail}`,
-    openAIStatus: status,
-    detail,
-  };
+  return { error: `OpenAI realtime error ${status}: ${detail}`, openAIStatus: status, detail };
 }
 
 export async function POST(request: Request) {
@@ -60,6 +34,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "OPENAI_API_KEY is not configured on the server." }, { status: 503 });
     }
 
+    const context = parsed.data.context as unknown as WorkspaceContext;
     const form = new FormData();
     form.set("sdp", parsed.data.sdp);
     form.set(
@@ -67,7 +42,7 @@ export async function POST(request: Request) {
       JSON.stringify({
         type: "realtime",
         model: process.env.OPENAI_REALTIME_MODEL || "gpt-realtime",
-        instructions: contextInstructions(parsed.data.context),
+        instructions: contextInstructions(context),
         output_modalities: ["audio"],
         audio: {
           input: {
@@ -78,7 +53,7 @@ export async function POST(request: Request) {
               interrupt_response: true,
               threshold: 0.5,
               prefix_padding_ms: 300,
-              silence_duration_ms: 600,
+              silence_duration_ms: 700,
             },
           },
           output: { voice: process.env.OPENAI_VOICE || "marin" },
@@ -98,10 +73,7 @@ export async function POST(request: Request) {
       return Response.json(safeOpenAIError(openAIResponse.status, answer), { status: 502 });
     }
 
-    return new Response(answer, {
-      status: 200,
-      headers: { "Content-Type": "application/sdp" },
-    });
+    return new Response(answer, { status: 200, headers: { "Content-Type": "application/sdp" } });
   } catch (error) {
     console.error("Nexus realtime setup failed", error);
     return Response.json({ error: "Nexus could not start voice." }, { status: 500 });
