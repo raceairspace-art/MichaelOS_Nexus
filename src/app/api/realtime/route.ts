@@ -64,9 +64,6 @@ export async function POST(request: Request) {
       return Response.json({ error: "OPENAI_API_KEY is not configured on the server." }, { status: 503 });
     }
 
-    // OpenAI's Realtime WebRTC endpoint expects multipart fields named
-    // `sdp` and `session`, not uploaded files. Using Blob/File parts causes
-    // the API to report that the required `sdp` form field is missing.
     const form = new FormData();
     form.set("sdp", parsed.data.sdp);
     form.set(
@@ -79,7 +76,14 @@ export async function POST(request: Request) {
         audio: {
           input: {
             transcription: { model: "gpt-4o-mini-transcribe", language: "en" },
-            turn_detection: { type: "semantic_vad", interrupt_response: true },
+            turn_detection: {
+              type: "server_vad",
+              create_response: true,
+              interrupt_response: true,
+              threshold: 0.4,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 600,
+            },
           },
           output: { voice: process.env.OPENAI_VOICE || "marin" },
         },
