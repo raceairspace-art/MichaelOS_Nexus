@@ -81,11 +81,11 @@ export default function DigitalOliverWorkspaceComplete({state,onChange}:Props){
  useEffect(()=>{
   if(!validDate(date)||runningRef.current)return;
   if(dayCases.some(c=>c?.aiReviewState==="loading"))return;
-  const pending=symbols.filter(symbol=>{const c=state.cases.find(x=>x.sessionDate===date&&x.symbol===symbol);return c&&!freshAi(c.aiReview,state.modelSettings,state.selectedTimeframe)&&c.aiReviewState!=="error"});
+  const pending=symbols.filter(symbol=>{const c=state.cases.find(x=>x.sessionDate===date&&x.symbol===symbol);if(!c||freshAi(c.aiReview,state.modelSettings,state.selectedTimeframe)||c.aiReviewState==="error")return false;if(symbol===current.symbol&&c.aiReviewState==="idle"&&!c.aiReview)return false;return true});
   if(!pending.length){if(allFresh&&!aiRankFresh)void rankDay();return}
   runningRef.current=true;
   void(async()=>{for(const symbol of pending)await reviewOne(symbol);runningRef.current=false;const latest=stateRef.current;const done=symbols.every(s=>{const c=latest.cases.find(x=>x.sessionDate===date&&x.symbol===s);return!!c&&freshAi(c.aiReview,latest.modelSettings,latest.selectedTimeframe)});if(done)await rankDay()})();
- },[date,state.selectedTimeframe,state.modelSettings.version,statusKey,allFresh,aiRankFresh]); // eslint-disable-line react-hooks/exhaustive-deps
+ },[date,state.selectedTimeframe,state.modelSettings.version,statusKey,allFresh,aiRankFresh,current.symbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
  function selectSymbol(symbol:OliverSymbol){let next=ensureCasesForDate(stateRef.current,date);const target=next.cases.find(c=>c.sessionDate===date&&c.symbol===symbol);if(!target)return;next={...next,selectedCaseId:target.caseId,marketSnapshot:null,updatedAt:new Date().toISOString()};stateRef.current=next;onChange(next)}
  function chooseHuman(symbol:OliverSymbol){let next=stateRef.current;const d=dayFor(next,date);const removing=d.bestSymbol===symbol;next=setDay(next,date,{bestSymbol:removing?"":symbol,noTradeDay:false,secondSymbol:d.secondSymbol===symbol?"":d.secondSymbol});stateRef.current=next;onChange(next)}
