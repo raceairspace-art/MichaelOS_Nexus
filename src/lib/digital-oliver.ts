@@ -197,6 +197,7 @@ function migrateCase(raw: Partial<CaseReview>): CaseReview {
 }
 
 export function migrateWorkspaceState(raw: Partial<DigitalOliverWorkspaceState>): DigitalOliverWorkspaceState {
+  const snapshot = raw.marketSnapshot;
   return {
     ...initialDigitalOliverState,
     ...raw,
@@ -205,7 +206,12 @@ export function migrateWorkspaceState(raw: Partial<DigitalOliverWorkspaceState>)
     selectedDate: raw.selectedDate ?? "",
     cases: Array.isArray(raw.cases) && raw.cases.length ? raw.cases.map(migrateCase) : initialDigitalOliverState.cases,
     week: { ...initialDigitalOliverState.week, ...(raw.week ?? {}) },
-    marketSnapshot: raw.marketSnapshot ? { phase:"decision", decisionTime:raw.marketSnapshot.candidate?.event_time ?? null, outcome:null, ...raw.marketSnapshot } : null,
+    marketSnapshot: snapshot ? {
+      ...snapshot,
+      phase: snapshot.phase ?? "decision",
+      decisionTime: snapshot.decisionTime ?? snapshot.candidate?.event_time ?? null,
+      outcome: snapshot.outcome ?? null,
+    } : null,
   };
 }
 
