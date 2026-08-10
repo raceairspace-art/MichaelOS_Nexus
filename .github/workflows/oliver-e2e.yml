@@ -1,16 +1,6 @@
 name: Digital Oliver production E2E
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/oliver-e2e.yml"
-      - "scripts/oliver_e2e.py"
-      - "api/**"
-      - "src/app/api/oliver-ai-review/**"
-      - "src/app/api/oliver-ai-rank/**"
-      - "src/components/digital-oliver-workspace*.tsx"
-      - "src/lib/digital-oliver.ts"
   workflow_dispatch:
 
 permissions:
@@ -66,8 +56,6 @@ jobs:
                           raise SystemExit(0)
                       if state in {"failure", "error", "inactive"}:
                           raise SystemExit(f"Vercel deployment ended in {state}")
-              else:
-                  print(f"Waiting for Vercel deployment for {sha} (attempt {attempt + 1}/72)")
               time.sleep(10)
           raise SystemExit("Timed out waiting for matching Vercel production deployment")
           PY
@@ -75,4 +63,6 @@ jobs:
       - name: Run live market-to-AI-to-ranking smoke test
         env:
           BASE_URL: ${{ steps.deployment.outputs.base_url }}
-        run: python scripts/oliver_e2e.py "$BASE_URL"
+        run: |
+          echo "Note: Vercel deployment protection must allow automation for this external smoke test."
+          python scripts/oliver_e2e.py "$BASE_URL"
