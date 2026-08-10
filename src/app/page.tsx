@@ -37,13 +37,11 @@ function makeEntry(role: TranscriptEntry["role"], text: string, mode: Transcript
   return { id: crypto.randomUUID(), role, text, createdAt: now(), mode };
 }
 
-function makeTestToneBlob() {
+function makeToneBlob(durationSeconds = 0.7, volume = 0.28) {
   const sampleRate = 44100;
-  const durationSeconds = 0.7;
-  const sampleCount = Math.floor(sampleRate * durationSeconds);
+  const sampleCount = Math.max(1, Math.floor(sampleRate * durationSeconds));
   const buffer = new ArrayBuffer(44 + sampleCount * 2);
   const view = new DataView(buffer);
-
   const writeAscii = (offset: number, value: string) => {
     for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i));
   };
@@ -64,7 +62,7 @@ function makeTestToneBlob() {
 
   for (let i = 0; i < sampleCount; i += 1) {
     const envelope = Math.min(1, i / 500, (sampleCount - i) / 1000);
-    const sample = Math.sin((2 * Math.PI * 523.25 * i) / sampleRate) * 0.28 * envelope;
+    const sample = Math.sin((2 * Math.PI * 523.25 * i) / sampleRate) * volume * envelope;
     view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 0x7fff, true);
   }
 
@@ -85,9 +83,8 @@ export default function Home() {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
-  const fallbackUrlRef = useRef<string | null>(null);
+  const speakerRef = useRef<HTMLAudioElement | null>(null);
+  const speakerUrlRef = useRef<string | null>(null);
   const assistantDraftRef = useRef("");
 
   useEffect(() => {
@@ -140,7 +137,7 @@ export default function Home() {
     if (!clean || textLoading) return;
 
     const userEntry = makeEntry("user", clean, "text");
-    const contextForRequest = buildWorkspaceContext(workspace, selectedSection, [...transcript, userEntry]);
+    const requestContext = buildWorkspaceContext(workspace, selectedSection, [...transcript, userEntry]);
     setTranscript((current) => [...current, userEntry]);
     setInput("");
     setTextLoading(true);
@@ -149,7 +146,7 @@ export default function Home() {
       const response = await fetch("/api/collaborate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: clean, context: contextForRequest }),
+        body: JSON.stringify({ message: clean, context: requestContext }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Nexus could not respond.");
@@ -169,12 +166,60 @@ export default function Home() {
     void sendText(input);
   }
 
-  async function speakFallback(text: string) {
-    const audio = fallbackAudioRef.current;
+  function clearSpeakerUrl() {
+    if (speakerUrlRef.current) {
+      URL.revokeObjectURL(speakerUrlRef.current);
+      speakerUrlRef.current = null;
+    }
+  }
+
+  async function primeSpeaker() {
+    const audio = speakerRef.current;
+    if (!audio) throw new Error("Nexus speaker element is unavailable.");
+
+    const url = URL.createObjectURL(makeToneBlob(0.03, 0));
+    audio.pause();
+    audio.srcObject = null;
+    audio.src = url;
+    audio.muted = false;
+    audio.volume = 1;
+    try {
+      await audio.play();
+      audio.pause();
+      setAudioStatus("Speaker authorized");
+    } finally {
+      audio.removeAttribute("src");
+      audio.load();
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function speakWithBrowser(text: string) {
+    if (!("speechSynthesis" in window)) return false;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    utterance.onstart = () => {
+      setVoiceState("speaking");
+      setAudioStatus("Playing browser voice fallback");
+    };
+    utterance.onend = () => {
+      setVoiceState("listening");
+      setAudioStatus("Browser voice finished");
+    };
+    utterance.onerror = () => setVoiceError("Browser speech synthesis also failed.");
+    window.speechSynthesis.speak(utterance);
+    return true;
+  }
+
+  async function speakResponse(text: string) {
+    const audio = speakerRef.current;
     if (!audio || !text.trim()) return;
 
     try {
-      setAudioStatus("Generating fallback speech");
+      setAudioStatus("Generating Nexus voice");
       const response = await fetch("/api/speak", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -182,23 +227,27 @@ export default function Home() {
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Fallback speech request failed.");
+        throw new Error(data.error || "OpenAI speech request failed.");
       }
 
       const blob = await response.blob();
-      if (fallbackUrlRef.current) URL.revokeObjectURL(fallbackUrlRef.current);
+      if (blob.size < 100) throw new Error("OpenAI returned an empty speech file.");
+      clearSpeakerUrl();
       const url = URL.createObjectURL(blob);
-      fallbackUrlRef.current = url;
+      speakerUrlRef.current = url;
+
+      audio.pause();
+      audio.srcObject = null;
       audio.src = url;
       audio.muted = false;
       audio.volume = 1;
       setVoiceState("speaking");
-      setAudioStatus("Playing Nexus fallback voice");
+      setAudioStatus(`Playing OpenAI voice (${Math.round(blob.size / 1024)} KB)`);
       await audio.play();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Fallback speech failed.";
-      setVoiceError(message);
-      setAudioStatus("Fallback speech failed");
+      const message = error instanceof Error ? error.message : "OpenAI speech playback failed.";
+      setVoiceError(`OpenAI voice failed: ${message}`);
+      if (!speakWithBrowser(text)) setAudioStatus("All voice playback failed");
     }
   }
 
@@ -210,10 +259,7 @@ export default function Home() {
       if (type.includes("input_audio_buffer.speech_started")) setVoiceState("listening");
       if (type.includes("input_audio_buffer.speech_stopped")) setVoiceState("thinking");
       if (type === "response.created") setVoiceState("thinking");
-      if (type.includes("response.output_audio.delta") || type.includes("response.audio.delta")) setVoiceState("speaking");
       if (type === "response.done") setVoiceState("listening");
-      if (type.includes("output_audio_buffer.started")) setAudioStatus("OpenAI started audio output");
-      if (type.includes("output_audio_buffer.stopped")) setAudioStatus("OpenAI finished audio output");
 
       if (type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
         setTranscript((current) => [...current, makeEntry("user", event.transcript.trim(), "voice")]);
@@ -228,7 +274,7 @@ export default function Home() {
         assistantDraftRef.current = "";
         if (text) {
           setTranscript((current) => [...current, makeEntry("assistant", text, "voice")]);
-          void speakFallback(text);
+          void speakResponse(text);
         }
       }
     } catch {
@@ -237,11 +283,13 @@ export default function Home() {
   }
 
   async function testSpeaker() {
-    const audio = audioRef.current;
+    const audio = speakerRef.current;
     if (!audio || peerRef.current) return;
 
     setVoiceError("");
-    const url = URL.createObjectURL(makeTestToneBlob());
+    clearSpeakerUrl();
+    const url = URL.createObjectURL(makeToneBlob());
+    speakerUrlRef.current = url;
     try {
       audio.pause();
       audio.srcObject = null;
@@ -252,33 +300,20 @@ export default function Home() {
       await audio.play();
       setAudioStatus("Speaker test played");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Speaker test failed.";
+      setVoiceError(error instanceof Error ? error.message : "Speaker test failed.");
       setAudioStatus("Speaker test failed");
-      setVoiceError(message);
-    } finally {
-      window.setTimeout(() => {
-        audio.pause();
-        audio.removeAttribute("src");
-        audio.load();
-        URL.revokeObjectURL(url);
-      }, 900);
     }
   }
 
   async function startVoice() {
     if (peerRef.current) return;
     setVoiceError("");
-    setAudioStatus("Waiting for remote audio");
     setVoiceState("connecting");
 
     try {
-      const audio = audioRef.current;
-      if (!audio) throw new Error("Nexus speaker element is unavailable.");
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.srcObject = null;
-      audio.muted = false;
-      audio.volume = 1;
+      // Prime the exact element that will later play OpenAI TTS. This happens
+      // immediately from the user's Talk click, before microphone/network waits.
+      await primeSpeaker();
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -287,30 +322,26 @@ export default function Home() {
       peerRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
+      // Keep the incoming Realtime media track negotiated, but do not attach the
+      // currently-silent track to our proven speaker element. V1 output uses TTS.
       pc.ontrack = (event) => {
-        const remoteStream = event.streams[0] ?? new MediaStream([event.track]);
-        audio.srcObject = remoteStream;
-        setAudioStatus(`Remote ${event.track.kind} track received`);
-        void audio.play()
-          .then(() => setAudioStatus("Nexus realtime audio playing"))
-          .catch((error) => {
-            const message = error instanceof Error ? error.message : "Browser blocked audio playback.";
-            setAudioStatus("Realtime audio playback blocked");
-            setVoiceError(`Remote audio arrived, but Chrome could not play it: ${message}`);
-          });
+        setAudioStatus(`Realtime ${event.track.kind} track negotiated; TTS output active`);
       };
 
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "connected") setVoiceState("listening");
-        if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
-          if (pc.connectionState !== "closed") setVoiceState("error");
+        if (["failed", "disconnected", "closed"].includes(pc.connectionState) && pc.connectionState !== "closed") {
+          setVoiceState("error");
         }
       };
 
       const channel = pc.createDataChannel("oai-events");
       channelRef.current = channel;
       channel.onmessage = (event) => handleRealtimeEvent(event.data);
-      channel.onopen = () => setVoiceState("listening");
+      channel.onopen = () => {
+        setVoiceState("listening");
+        setAudioStatus("Voice input ready; OpenAI TTS output enabled");
+      };
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -341,21 +372,14 @@ export default function Home() {
     peerRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.srcObject = null;
-      audioRef.current.removeAttribute("src");
-      audioRef.current.load();
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (speakerRef.current) {
+      speakerRef.current.pause();
+      speakerRef.current.srcObject = null;
+      speakerRef.current.removeAttribute("src");
+      speakerRef.current.load();
     }
-    if (fallbackAudioRef.current) {
-      fallbackAudioRef.current.pause();
-      fallbackAudioRef.current.removeAttribute("src");
-      fallbackAudioRef.current.load();
-    }
-    if (fallbackUrlRef.current) {
-      URL.revokeObjectURL(fallbackUrlRef.current);
-      fallbackUrlRef.current = null;
-    }
+    clearSpeakerUrl();
     assistantDraftRef.current = "";
     setAudioStatus("Audio output waiting");
     setVoiceState("ready");
@@ -366,16 +390,15 @@ export default function Home() {
 
   return (
     <main className="nexus-shell">
-      <audio ref={audioRef} autoPlay style={{ display: "none" }} />
       <audio
-        ref={fallbackAudioRef}
-        autoPlay
+        ref={speakerRef}
         style={{ display: "none" }}
         onEnded={() => {
-          setVoiceState("listening");
-          setAudioStatus("Fallback voice finished");
+          setVoiceState(peerRef.current ? "listening" : "ready");
+          setAudioStatus(peerRef.current ? "Nexus voice finished" : "Speaker test finished");
         }}
       />
+
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark"><Sparkles size={17} /></span>
@@ -394,7 +417,11 @@ export default function Home() {
       <div className="workspace-layout">
         <section className="workspace">
           <div className="workspace-heading">
-            <div><span className="eyebrow">ACTIVE PROJECT</span><h1>Digital Oliver</h1><p>A living model of trading philosophy, rules, knowledge, and behavior.</p></div>
+            <div>
+              <span className="eyebrow">ACTIVE PROJECT</span>
+              <h1>Digital Oliver</h1>
+              <p>A living model of trading philosophy, rules, knowledge, and behavior.</p>
+            </div>
             <div className="workspace-save"><Save size={14} /> Auto-saved</div>
           </div>
 
@@ -469,9 +496,18 @@ export default function Home() {
           <form className="composer" onSubmit={onSubmit}>
             <label><span className="context-pill"><Eye size={11} /> {sectionLabels[selectedSection]}</span>Text is secondary; voice is primary.</label>
             <div className="composer-row">
-              <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask Nexus about what you’re working on…" rows={2} onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendText(input); }
-              }} />
+              <textarea
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder="Ask Nexus about what you’re working on…"
+                rows={2}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void sendText(input);
+                  }
+                }}
+              />
               <button type="submit" disabled={!input.trim() || textLoading} aria-label="Send"><ArrowUp size={18} /></button>
             </div>
           </form>
