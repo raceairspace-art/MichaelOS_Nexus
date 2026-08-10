@@ -64,27 +64,26 @@ export async function POST(request: Request) {
       return Response.json({ error: "OPENAI_API_KEY is not configured on the server." }, { status: 503 });
     }
 
+    // OpenAI's Realtime WebRTC endpoint expects multipart fields named
+    // `sdp` and `session`, not uploaded files. Using Blob/File parts causes
+    // the API to report that the required `sdp` form field is missing.
     const form = new FormData();
-    form.set("sdp", new Blob([parsed.data.sdp], { type: "application/sdp" }), "offer.sdp");
+    form.set("sdp", parsed.data.sdp);
     form.set(
       "session",
-      new Blob(
-        [JSON.stringify({
-          type: "realtime",
-          model: process.env.OPENAI_REALTIME_MODEL || "gpt-realtime",
-          instructions: contextInstructions(parsed.data.context),
-          output_modalities: ["audio"],
-          audio: {
-            input: {
-              transcription: { model: "gpt-4o-mini-transcribe", language: "en" },
-              turn_detection: { type: "semantic_vad", interrupt_response: true },
-            },
-            output: { voice: process.env.OPENAI_VOICE || "marin" },
+      JSON.stringify({
+        type: "realtime",
+        model: process.env.OPENAI_REALTIME_MODEL || "gpt-realtime",
+        instructions: contextInstructions(parsed.data.context),
+        output_modalities: ["audio"],
+        audio: {
+          input: {
+            transcription: { model: "gpt-4o-mini-transcribe", language: "en" },
+            turn_detection: { type: "semantic_vad", interrupt_response: true },
           },
-        })],
-        { type: "application/json" },
-      ),
-      "session.json",
+          output: { voice: process.env.OPENAI_VOICE || "marin" },
+        },
+      }),
     );
 
     const openAIResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
