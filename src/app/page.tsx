@@ -45,6 +45,7 @@ export default function Home() {
   const [textLoading, setTextLoading] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("ready");
   const [voiceError, setVoiceError] = useState("");
+  const [audioStatus, setAudioStatus] = useState("Audio output waiting");
   const [hydrated, setHydrated] = useState(false);
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -164,6 +165,7 @@ export default function Home() {
   async function startVoice() {
     if (peerRef.current) return;
     setVoiceError("");
+    setAudioStatus("Waiting for Nexus audio");
     setVoiceState("connecting");
 
     try {
@@ -174,12 +176,26 @@ export default function Home() {
       peerRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      const audio = new Audio();
+      const audio = document.createElement("audio");
       audio.autoplay = true;
+      audio.playsInline = true;
+      audio.muted = false;
+      audio.volume = 1;
+      audio.style.display = "none";
+      document.body.appendChild(audio);
       audioRef.current = audio;
+
       pc.ontrack = (event) => {
-        audio.srcObject = event.streams[0];
-        void audio.play().catch(() => undefined);
+        const remoteStream = event.streams[0] ?? new MediaStream([event.track]);
+        audio.srcObject = remoteStream;
+        setAudioStatus("Remote audio track received");
+        void audio.play()
+          .then(() => setAudioStatus("Nexus audio playing"))
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : "Browser blocked audio playback.";
+            setAudioStatus("Audio playback blocked");
+            setVoiceError(`Nexus generated audio, but Chrome could not play it: ${message}`);
+          });
       };
 
       pc.onconnectionstatechange = () => {
@@ -223,9 +239,14 @@ export default function Home() {
     peerRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    if (audioRef.current) audioRef.current.srcObject = null;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.srcObject = null;
+      audioRef.current.remove();
+    }
     audioRef.current = null;
     assistantDraftRef.current = "";
+    setAudioStatus("Audio output waiting");
     setVoiceState("ready");
   }
 
@@ -291,7 +312,7 @@ export default function Home() {
             </button>
             <div>
               <strong>{voiceActive ? "Voice session live" : "Talk to Nexus"}</strong>
-              <span>{voiceActive ? "Speak naturally. Nexus already has the workspace." : "Start a realtime conversation in this workspace."}</span>
+              <span>{voiceActive ? `Speak naturally. ${audioStatus}.` : "Start a realtime conversation in this workspace."}</span>
             </div>
             {voiceActive && <AudioLines className="wave-icon" size={24} />}
           </div>
