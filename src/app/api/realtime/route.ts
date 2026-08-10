@@ -30,6 +30,24 @@ const requestSchema = z.object({
   }),
 });
 
+function safeOpenAIError(status: number, body: string) {
+  let detail = "OpenAI rejected the realtime session request.";
+
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { message?: string; code?: string; type?: string; param?: string | null };
+    };
+    const message = parsed.error?.message?.trim();
+    const code = parsed.error?.code?.trim();
+    if (message) detail = message;
+    if (code) detail = `${detail} (${code})`;
+  } catch {
+    if (body.trim() && body.length < 500) detail = body.trim();
+  }
+
+  return { error: "Nexus could not start a realtime voice session.", openAIStatus: status, detail };
+}
+
 export async function POST(request: Request) {
   try {
     const parsed = requestSchema.safeParse(await request.json());
@@ -74,7 +92,7 @@ export async function POST(request: Request) {
     const answer = await openAIResponse.text();
     if (!openAIResponse.ok) {
       console.error("OpenAI realtime session failed", openAIResponse.status, answer);
-      return Response.json({ error: "Nexus could not start a realtime voice session." }, { status: 502 });
+      return Response.json(safeOpenAIError(openAIResponse.status, answer), { status: 502 });
     }
 
     return new Response(answer, {
