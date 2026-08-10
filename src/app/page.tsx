@@ -2,7 +2,7 @@
 
 import { ArrowUp, AudioLines, Eye, Mic, MicOff, Sparkles, Square } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import DigitalOliverWorkspace from "@/components/digital-oliver-workspace";
+import DigitalOliverWorkspace from "@/components/digital-oliver-workspace-complete";
 import { initialDigitalOliverState, migrateWorkspaceState, type DigitalOliverWorkspaceState } from "@/lib/digital-oliver";
 import { buildWorkspaceContext, contextInstructions, type TranscriptEntry } from "@/lib/nexus";
 
