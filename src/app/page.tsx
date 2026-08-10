@@ -178,7 +178,6 @@ export default function Home() {
 
       const audio = document.createElement("audio");
       audio.autoplay = true;
-      audio.playsInline = true;
       audio.muted = false;
       audio.volume = 1;
       audio.style.display = "none";
