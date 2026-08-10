@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 
 import pandas as pd
 
@@ -14,6 +17,7 @@ except ImportError:
 NY_TZ = "America/New_York"
 REGULAR_OPEN_MINUTE = 9 * 60 + 30
 REGULAR_CLOSE_MINUTE = 16 * 60
+YAHOO_CHART_HOSTS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
 
 
 def _yf():
@@ -171,14 +175,74 @@ def _history_call(symbol: str, interval: str, period: str, prepost: bool) -> pd.
     return normalize_index(frame)
 
 
+def _direct_chart_call(symbol: str, interval: str, period: str, prepost: bool) -> pd.DataFrame:
+    """Fetch Yahoo's chart JSON directly, bypassing yfinance session/crumb state."""
+    params = {
+        "range": period,
+        "interval": interval,
+        "includePrePost": "true" if prepost else "false",
+        "events": "div,splits",
+        "includeAdjustedClose": "false",
+    }
+    errors: list[str] = []
+    for host in YAHOO_CHART_HOSTS:
+        url = f"https://{host}/v8/finance/chart/{quote(symbol)}?{urlencode(params)}"
+        req = Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+                "Accept": "application/json,text/plain,*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Cache-Control": "no-cache",
+            },
+        )
+        try:
+            with urlopen(req, timeout=12) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            chart = payload.get("chart") or {}
+            if chart.get("error"):
+                raise RuntimeError(str(chart["error"]))
+            results = chart.get("result") or []
+            if not results:
+                raise RuntimeError("Yahoo chart result was empty")
+            result = results[0]
+            timestamps = result.get("timestamp") or []
+            indicators = result.get("indicators") or {}
+            quotes = indicators.get("quote") or []
+            if not timestamps or not quotes:
+                raise RuntimeError("Yahoo chart response contained no quote bars")
+            quote_data = quotes[0]
+            length = len(timestamps)
+            def values(name: str):
+                vals = quote_data.get(name) or []
+                return list(vals[:length]) + [None] * max(0, length - len(vals))
+            frame = pd.DataFrame(
+                {
+                    "Open": values("open"),
+                    "High": values("high"),
+                    "Low": values("low"),
+                    "Close": values("close"),
+                    "Volume": values("volume"),
+                },
+                index=pd.to_datetime(timestamps, unit="s", utc=True),
+            )
+            frame.index.name = "Datetime"
+            frame = normalize_index(frame)
+            if frame.empty:
+                raise RuntimeError("Yahoo chart bars normalized to an empty frame")
+            return frame
+        except Exception as exc:
+            errors.append(f"{host}: {exc}")
+    raise RuntimeError("; ".join(errors))
+
+
 def download_recent(symbol: str, interval: str, period: str, prepost: bool = True) -> pd.DataFrame:
     errors: list[str] = []
     for candidate_period in _period_candidates(interval, period):
-        # Try regular+extended first because Oliver uses premarket references,
-        # then regular-only as a resilience fallback. A regular-only response
-        # is still far better than blocking all seven AI reviews.
+        # Direct chart JSON is deliberately first: it avoids yfinance's cookie
+        # and crumb state, which can be unreliable from ephemeral serverless IPs.
         for include_prepost in (prepost, False):
-            for method in (_download_call, _history_call):
+            for method in (_direct_chart_call, _download_call, _history_call):
                 try:
                     frame = method(symbol, interval, candidate_period, include_prepost)
                     if has_regular_session(frame):
@@ -186,7 +250,7 @@ def download_recent(symbol: str, interval: str, period: str, prepost: bool = Tru
                     errors.append(f"{method.__name__} {candidate_period} prepost={include_prepost}: no regular bars")
                 except Exception as exc:
                     errors.append(f"{method.__name__} {candidate_period} prepost={include_prepost}: {exc}")
-    detail = "; ".join(errors[-6:])
+    detail = "; ".join(errors[-9:])
     raise RuntimeError(f"No usable Yahoo intraday data returned for {symbol} ({interval}). {detail}")
 
 
