@@ -86,6 +86,8 @@ export default function Home() {
   const channelRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fallbackUrlRef = useRef<string | null>(null);
   const assistantDraftRef = useRef("");
 
   useEffect(() => {
@@ -167,6 +169,39 @@ export default function Home() {
     void sendText(input);
   }
 
+  async function speakFallback(text: string) {
+    const audio = fallbackAudioRef.current;
+    if (!audio || !text.trim()) return;
+
+    try {
+      setAudioStatus("Generating fallback speech");
+      const response = await fetch("/api/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Fallback speech request failed.");
+      }
+
+      const blob = await response.blob();
+      if (fallbackUrlRef.current) URL.revokeObjectURL(fallbackUrlRef.current);
+      const url = URL.createObjectURL(blob);
+      fallbackUrlRef.current = url;
+      audio.src = url;
+      audio.muted = false;
+      audio.volume = 1;
+      setVoiceState("speaking");
+      setAudioStatus("Playing Nexus fallback voice");
+      await audio.play();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Fallback speech failed.";
+      setVoiceError(message);
+      setAudioStatus("Fallback speech failed");
+    }
+  }
+
   function handleRealtimeEvent(raw: string) {
     try {
       const event = JSON.parse(raw);
@@ -191,7 +226,10 @@ export default function Home() {
       if (type === "response.output_audio_transcript.done" || type === "response.audio_transcript.done") {
         const text = (event.transcript || assistantDraftRef.current).trim();
         assistantDraftRef.current = "";
-        if (text) setTranscript((current) => [...current, makeEntry("assistant", text, "voice")]);
+        if (text) {
+          setTranscript((current) => [...current, makeEntry("assistant", text, "voice")]);
+          void speakFallback(text);
+        }
       }
     } catch {
       // Ignore non-JSON data channel payloads.
@@ -254,10 +292,10 @@ export default function Home() {
         audio.srcObject = remoteStream;
         setAudioStatus(`Remote ${event.track.kind} track received`);
         void audio.play()
-          .then(() => setAudioStatus("Nexus audio playing"))
+          .then(() => setAudioStatus("Nexus realtime audio playing"))
           .catch((error) => {
             const message = error instanceof Error ? error.message : "Browser blocked audio playback.";
-            setAudioStatus("Audio playback blocked");
+            setAudioStatus("Realtime audio playback blocked");
             setVoiceError(`Remote audio arrived, but Chrome could not play it: ${message}`);
           });
       };
@@ -309,6 +347,15 @@ export default function Home() {
       audioRef.current.removeAttribute("src");
       audioRef.current.load();
     }
+    if (fallbackAudioRef.current) {
+      fallbackAudioRef.current.pause();
+      fallbackAudioRef.current.removeAttribute("src");
+      fallbackAudioRef.current.load();
+    }
+    if (fallbackUrlRef.current) {
+      URL.revokeObjectURL(fallbackUrlRef.current);
+      fallbackUrlRef.current = null;
+    }
     assistantDraftRef.current = "";
     setAudioStatus("Audio output waiting");
     setVoiceState("ready");
@@ -320,6 +367,15 @@ export default function Home() {
   return (
     <main className="nexus-shell">
       <audio ref={audioRef} autoPlay style={{ display: "none" }} />
+      <audio
+        ref={fallbackAudioRef}
+        autoPlay
+        style={{ display: "none" }}
+        onEnded={() => {
+          setVoiceState("listening");
+          setAudioStatus("Fallback voice finished");
+        }}
+      />
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark"><Sparkles size={17} /></span>
