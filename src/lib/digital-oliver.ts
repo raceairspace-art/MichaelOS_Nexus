@@ -5,6 +5,8 @@ export const MAG7 = {
 
 export type OliverSymbol = keyof typeof MAG7;
 export type OliverTab = "guidedReview" | "modelSettings" | "dailyRanking" | "evidenceLibrary" | "statistics" | "export" | "rulebook";
+export type ReviewState = "unreviewed" | "in_progress" | "complete";
+export type AiReviewState = "idle" | "loading" | "complete" | "error";
 
 export type OliverModelSettings = {
   version: string;
@@ -66,23 +68,70 @@ export type OliverEngineCandidate = {
 export type OliverMarketSnapshot = {
   source: string; symbol: OliverSymbol; company: string; interval: "1m" | "5m" | "15m";
   sessionDate: string; caseRef: string; availableSessions: string[]; candidate: OliverEngineCandidate;
-  outcome: Record<string, number | boolean | null>; bars: OliverMarketBar[]; parameters: Record<string, number>;
+  phase: "decision" | "outcome"; decisionTime: string | null;
+  outcome: Record<string, number | boolean | null> | null; bars: OliverMarketBar[]; parameters: Record<string, number>;
   cache: string; loadedAt: string;
+};
+
+export type OliverAiReview = {
+  generatedAt: string;
+  model: string;
+  modelVersion: string;
+  timeframe: "1m" | "5m" | "15m";
+  decisionTime: string | null;
+  stateClassification: string;
+  locationClassification: string;
+  boxStatus: string;
+  stateQuality: number;
+  locationQuality: number;
+  premarketContextQuality: number;
+  spaceQuality: number;
+  riskQuality: number;
+  overallQuality: number;
+  structureBoxRelevant: boolean;
+  boxCleared: boolean;
+  trendAlignment: boolean;
+  volumeConfirmation: boolean;
+  priorCloseRelevant: boolean;
+  priorRangeRelevant: boolean;
+  priorHighLowRelevant: boolean;
+  sma20Relevant: boolean;
+  sma200Relevant: boolean;
+  powerTypes: string[];
+  oliverInterest: "Yes" | "Maybe" | "No";
+  wouldTrade: "Yes" | "Maybe" | "No";
+  direction: "Long" | "Short" | "None / unclear";
+  setupType: string;
+  overallGrade: "A+" | "A" | "B" | "C" | "Reject";
+  confidence: number;
+  strongestReason: string;
+  biggestConcern: string;
+  rationale: {
+    state: string; location: string; structure: string; space: string; power: string; risk: string; overall: string;
+  };
+};
+
+export type HumanAuditEntry = {
+  at: string;
+  changes: Record<string, { from: unknown; to: unknown }>;
 };
 
 export type CaseReview = {
   caseId: string; caseRef: string; sessionDate: string; symbol: OliverSymbol;
-  reviewState: "unreviewed" | "in_progress" | "complete";
+  reviewState: ReviewState;
   oliverInterest: "Unreviewed" | "Yes" | "Maybe" | "No"; wouldTrade: "Unreviewed" | "Yes" | "Maybe" | "No";
   direction: "Long" | "Short" | "None / unclear"; confidence: number; setupType: string;
   stateQuality: number; locationQuality: number; premarketContextQuality: number; spaceQuality: number;
   riskQuality: number; overallQuality: number; marketBias: string; gapDirection: string; trendAlignment: boolean;
   volumeConfirmation: boolean; priorCloseRelevant: boolean; priorRangeRelevant: boolean; priorHighLowRelevant: boolean;
   sma20Relevant: boolean; sma200Relevant: boolean; strongestReason: string; biggestConcern: string; humanRank: number | null;
-  locked: boolean; stateClassification: string; locationClassification: string; boxStatus: string;
+  locked: boolean; lockedAt: string | null; stateClassification: string; locationClassification: string; boxStatus: string;
   structureBoxRelevant: boolean; boxCleared: boolean; powerTypes: string[]; riskStatus: string;
   overallGrade: "A+" | "A" | "B" | "C" | "Reject"; michaelAnalysis: string; chatgptAnalysis: string;
   combinedConclusion: string; lesson: string; outcomeFollowthrough: string;
+  aiReviewState: AiReviewState; aiReviewError: string; aiReview: OliverAiReview | null;
+  humanAuditTrail: HumanAuditEntry[];
+  outcomeRevealed: boolean; replayCompleted: boolean; revealedOutcome: Record<string, number | boolean | null> | null;
 };
 
 export type DayReview = { sessionDate: string; bestSymbol: OliverSymbol | ""; secondSymbol: OliverSymbol | ""; noTradeDay: boolean; daySummary: string; winnerReason: string; separationReason: string; confidence: number; locked: boolean };
@@ -98,15 +147,28 @@ export type DigitalOliverWorkspaceState = {
 export const OLIVER_RULEBOOK_SUMMARY = {
   purpose: "Persistent research workbench for reconstructing, reviewing, and statistically testing Oliver Velez's recurring trading methodology.",
   hierarchy: ["State", "Location", "Structure Box", "Space", "Power", "Risk"] as const,
-  evidenceDiscipline: "Interpretation is locked before outcome statistics are revealed. Daily rankings are locked before comparing outcomes.",
+  evidenceDiscipline: "Only candles available at the opening-window decision point are supplied before lock. Human and AI assessments are kept separate. Outcome candles and statistics are revealed only after lock.",
   chartEvidence: ["20 SMA / 200 SMA state and trend context", "prior close, prior high/low, prior late-session range", "premarket high/low and market-open context", "engine-suggested Structure Box", "candidate entry and structural stop", "Space in R to nearest known obstacle", "Elephant candidates and volume"],
-  modelScope: { encoded: ["State from the 20/200 relationship", "basic 20/200 location", "Elephant Bar power", "engine-suggested Structure Box from prior rolling structure", "box-clear status", "structural event-bar risk", "Space in R to the nearest known obstacle"], planned: ["calibrated Structure Box", "refined Space/obstacle definitions", "Bull/Bear 180", "power tails", "color-change adds", "position-management rules", "rule-version comparisons", "true candle-by-candle replay"] },
+  modelScope: { encoded: ["State from the 20/200 relationship", "basic 20/200 location", "Elephant Bar power", "engine-suggested Structure Box from prior rolling structure", "box-clear status", "structural event-bar risk", "Space in R to the nearest known obstacle", "opening-window decision replay", "separate human and AI assessments"], planned: ["calibrated Structure Box", "refined Space/obstacle definitions", "Bull/Bear 180", "power tails", "color-change adds", "position-management rules", "rule-version comparisons"] },
 };
 
 const symbols = Object.keys(MAG7) as OliverSymbol[];
+
 export function blankCase(symbol: OliverSymbol, sessionDate = "Market data not connected"): CaseReview {
   const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(sessionDate) ? sessionDate.replaceAll("-", "") : "WEB";
-  return { caseId:`${sessionDate}-${symbol}`, caseRef:`DO-${dateKey}-${symbol}`, sessionDate, symbol, reviewState:"unreviewed", oliverInterest:"Unreviewed", wouldTrade:"Unreviewed", direction:"None / unclear", confidence:3, setupType:"Unclassified", stateQuality:3, locationQuality:3, premarketContextQuality:3, spaceQuality:3, riskQuality:3, overallQuality:3, marketBias:"Unclear", gapDirection:"Not important / unclear", trendAlignment:false, volumeConfirmation:false, priorCloseRelevant:false, priorRangeRelevant:false, priorHighLowRelevant:false, sma20Relevant:false, sma200Relevant:false, strongestReason:"", biggestConcern:"", humanRank:null, locked:false, stateClassification:"Unclear", locationClassification:"Neutral / unclear", boxStatus:"Box unclear", structureBoxRelevant:false, boxCleared:false, powerTypes:[], riskStatus:"Stop unclear", overallGrade:"B", michaelAnalysis:"", chatgptAnalysis:"", combinedConclusion:"", lesson:"", outcomeFollowthrough:"Unreviewed" };
+  return {
+    caseId:`${sessionDate}-${symbol}`, caseRef:`DO-${dateKey}-${symbol}`, sessionDate, symbol,
+    reviewState:"unreviewed", oliverInterest:"Unreviewed", wouldTrade:"Unreviewed", direction:"None / unclear",
+    confidence:3, setupType:"Unclassified", stateQuality:3, locationQuality:3, premarketContextQuality:3,
+    spaceQuality:3, riskQuality:3, overallQuality:3, marketBias:"Unclear", gapDirection:"Not important / unclear",
+    trendAlignment:false, volumeConfirmation:false, priorCloseRelevant:false, priorRangeRelevant:false,
+    priorHighLowRelevant:false, sma20Relevant:false, sma200Relevant:false, strongestReason:"", biggestConcern:"",
+    humanRank:null, locked:false, lockedAt:null, stateClassification:"Unclear", locationClassification:"Neutral / unclear",
+    boxStatus:"Box unclear", structureBoxRelevant:false, boxCleared:false, powerTypes:[], riskStatus:"Stop unclear",
+    overallGrade:"B", michaelAnalysis:"", chatgptAnalysis:"", combinedConclusion:"", lesson:"",
+    outcomeFollowthrough:"Unreviewed", aiReviewState:"idle", aiReviewError:"", aiReview:null, humanAuditTrail:[],
+    outcomeRevealed:false, replayCompleted:false, revealedOutcome:null,
+  };
 }
 
 export const initialDigitalOliverState: DigitalOliverWorkspaceState = {
@@ -117,6 +179,23 @@ export const initialDigitalOliverState: DigitalOliverWorkspaceState = {
   modelSettings:{...DEFAULT_MODEL_SETTINGS}, marketSnapshot:null, updatedAt:new Date(0).toISOString(),
 };
 
+function migrateCase(raw: Partial<CaseReview>): CaseReview {
+  const symbol = (raw.symbol ?? "AAPL") as OliverSymbol;
+  const date = raw.sessionDate ?? "Market data not connected";
+  return {
+    ...blankCase(symbol, date),
+    ...raw,
+    aiReview: raw.aiReview ?? null,
+    aiReviewState: raw.aiReview ? "complete" : (raw.aiReviewState ?? "idle"),
+    aiReviewError: raw.aiReviewError ?? "",
+    humanAuditTrail: raw.humanAuditTrail ?? [],
+    lockedAt: raw.lockedAt ?? null,
+    outcomeRevealed: raw.outcomeRevealed ?? false,
+    replayCompleted: raw.replayCompleted ?? false,
+    revealedOutcome: raw.revealedOutcome ?? null,
+  };
+}
+
 export function migrateWorkspaceState(raw: Partial<DigitalOliverWorkspaceState>): DigitalOliverWorkspaceState {
   return {
     ...initialDigitalOliverState,
@@ -124,8 +203,9 @@ export function migrateWorkspaceState(raw: Partial<DigitalOliverWorkspaceState>)
     modelSettings: { ...DEFAULT_MODEL_SETTINGS, ...(raw.modelSettings ?? {}) },
     availableSessions: raw.availableSessions ?? [],
     selectedDate: raw.selectedDate ?? "",
-    cases: Array.isArray(raw.cases) && raw.cases.length ? raw.cases : initialDigitalOliverState.cases,
+    cases: Array.isArray(raw.cases) && raw.cases.length ? raw.cases.map(migrateCase) : initialDigitalOliverState.cases,
     week: { ...initialDigitalOliverState.week, ...(raw.week ?? {}) },
+    marketSnapshot: raw.marketSnapshot ? { phase:"decision", decisionTime:raw.marketSnapshot.candidate?.event_time ?? null, outcome:null, ...raw.marketSnapshot } : null,
   };
 }
 
@@ -144,8 +224,29 @@ export function selectedCase(state: DigitalOliverWorkspaceState) {
   return state.cases.find(i=>i.caseId===state.selectedCaseId) ?? state.cases.find(i=>i.sessionDate===state.selectedDate) ?? state.cases[0];
 }
 
+const auditFields = new Set<keyof CaseReview>([
+  "stateClassification","locationClassification","boxStatus","stateQuality","locationQuality","premarketContextQuality",
+  "spaceQuality","riskQuality","overallQuality","structureBoxRelevant","boxCleared","trendAlignment","volumeConfirmation",
+  "priorCloseRelevant","priorRangeRelevant","priorHighLowRelevant","sma20Relevant","sma200Relevant","powerTypes","oliverInterest",
+  "wouldTrade","direction","confidence","setupType","overallGrade","strongestReason","biggestConcern","michaelAnalysis","combinedConclusion","lesson",
+]);
+
 export function updateCase(state: DigitalOliverWorkspaceState, caseId: string, patch: Partial<CaseReview>): DigitalOliverWorkspaceState {
-  return { ...state, updatedAt:new Date().toISOString(), cases:state.cases.map(i=>i.caseId===caseId?{...i,...patch}:i) };
+  return {
+    ...state,
+    updatedAt:new Date().toISOString(),
+    cases:state.cases.map(item=>{
+      if(item.caseId!==caseId) return item;
+      const changes: HumanAuditEntry["changes"] = {};
+      if(!item.locked){
+        for(const [key,to] of Object.entries(patch) as Array<[keyof CaseReview, CaseReview[keyof CaseReview]]>){
+          if(auditFields.has(key) && JSON.stringify(item[key])!==JSON.stringify(to)) changes[String(key)]={from:item[key],to};
+        }
+      }
+      const audit = Object.keys(changes).length ? [...item.humanAuditTrail,{at:new Date().toISOString(),changes}] : item.humanAuditTrail;
+      return {...item,...patch,humanAuditTrail:audit};
+    }),
+  };
 }
 
 export function weekKey(date: string) {
