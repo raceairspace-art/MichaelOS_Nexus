@@ -1,0 +1,106 @@
+.workspace-layout-v2 { grid-template-columns: minmax(0, 1fr) 390px; }
+.oliver-workspace { min-width: 0; padding: 28px 30px 36px; overflow: auto; }
+.oliver-titlebar { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; margin-bottom: 20px; }
+.oliver-titlebar h1 { margin: 7px 0 7px; font-size: clamp(30px, 4vw, 44px); letter-spacing: -.035em; }
+.oliver-titlebar p { margin: 0; color: var(--muted); font-size: 12px; }
+.oliver-progress { min-width: 110px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.025); }
+.oliver-progress strong, .oliver-progress span { display: block; }
+.oliver-progress strong { font-size: 18px; }
+.oliver-progress span { margin-top: 3px; font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+.oliver-tabs { display: flex; gap: 5px; overflow-x: auto; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+.oliver-tabs button { flex: 0 0 auto; padding: 10px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; }
+.oliver-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.oliver-review { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; }
+.oliver-case-rail { padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.018); align-self: start; position: sticky; top: 12px; }
+.oliver-case-rail small { display: block; color: var(--muted); font-size: 8px; letter-spacing: .12em; margin: 4px 6px 8px; }
+.oliver-case-rail button { width: 100%; border: 0; border-radius: 9px; background: transparent; color: var(--muted); text-align: left; padding: 9px; cursor: pointer; }
+.oliver-case-rail button + button { margin-top: 3px; }
+.oliver-case-rail button.active { background: var(--accent-soft); color: var(--text); }
+.oliver-case-rail strong, .oliver-case-rail span, .oliver-case-rail i { display: block; }
+.oliver-case-rail strong { font-size: 11px; }
+.oliver-case-rail span { font-size: 9px; margin-top: 2px; }
+.oliver-case-rail i { font-style: normal; font-size: 8px; margin-top: 4px; color: #717984; text-transform: capitalize; }
+.oliver-case-main { min-width: 0; }
+.oliver-case-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(16,19,24,.7); }
+.case-ref { color: var(--accent); font-size: 9px; font-family: var(--font-geist-mono); }
+.oliver-case-head h2 { margin: 4px 0 3px; font-size: 18px; }
+.oliver-case-head p { margin: 0; color: var(--muted); font-size: 9px; }
+.timeframe-group { display: flex; gap: 4px; }
+.timeframe-group button { border: 1px solid var(--line); background: transparent; border-radius: 8px; padding: 7px 9px; font-size: 9px; cursor: pointer; }
+.timeframe-group button.active { border-color: rgba(217,182,122,.38); background: var(--accent-soft); color: var(--accent); }
+.oliver-chart-placeholder { min-height: 270px; margin-top: 12px; border: 1px dashed var(--line-strong); border-radius: 14px; display: flex; align-items: center; justify-content: center; padding: 28px; text-align: center; position: relative; background: linear-gradient(180deg, rgba(255,255,255,.018), rgba(255,255,255,.005)); }
+.oliver-chart-placeholder > div { max-width: 600px; }
+.oliver-chart-placeholder strong { display: block; font-size: 13px; }
+.oliver-chart-placeholder p { color: var(--muted); line-height: 1.6; font-size: 10px; }
+.oliver-chart-placeholder > span { position: absolute; right: 12px; bottom: 10px; color: #6c737d; font-size: 8px; text-transform: uppercase; }
+.oliver-section { margin-top: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(16,19,24,.6); }
+.section-heading { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; }
+.section-heading > span { width: 24px; height: 24px; flex: 0 0 auto; border-radius: 8px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 700; }
+.section-heading h3 { margin: 1px 0 3px; font-size: 13px; }
+.section-heading p { margin: 0; color: var(--muted); font-size: 9px; }
+.oliver-grid { display: grid; gap: 10px; }
+.oliver-grid.three { grid-template-columns: repeat(3, minmax(0,1fr)); }
+.oliver-grid.two { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.oliver-grid.compact { margin-top: 10px; }
+.oliver-field { display: flex; flex-direction: column; gap: 6px; }
+.oliver-field > span { color: var(--muted); font-size: 9px; }
+.oliver-field input:not([type=range]), .oliver-field select, .oliver-field textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: 9px; background: #0d1014; color: var(--text); padding: 9px 10px; font: inherit; font-size: 10px; outline: none; }
+.oliver-field textarea { resize: vertical; line-height: 1.5; }
+.oliver-field input[type=range] { width: 100%; accent-color: var(--accent); }
+.oliver-section > .oliver-field { margin-top: 10px; }
+.oliver-check-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin-top: 12px; }
+.oliver-check { display: flex; align-items: center; gap: 7px; color: var(--soft); font-size: 9px; }
+.oliver-check input { accent-color: var(--accent); }
+.power-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.power-pills button { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 999px; padding: 6px 9px; font-size: 8px; cursor: pointer; }
+.power-pills button.active { color: var(--accent); background: var(--accent-soft); border-color: rgba(217,182,122,.3); }
+.lock-row { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.lock-row > span { color: var(--muted); font-size: 8px; text-align: right; }
+.oliver-empty, .oliver-rulebook { padding: 28px; border: 1px solid var(--line); border-radius: 14px; background: rgba(16,19,24,.6); }
+.oliver-empty strong { display: block; font-size: 13px; }
+.oliver-empty p, .oliver-rulebook p, .oliver-rulebook li { color: var(--muted); font-size: 10px; line-height: 1.65; }
+.oliver-rulebook h2 { margin-top: 0; font-size: 20px; }
+.oliver-rulebook h3 { margin-top: 22px; font-size: 12px; }
+.rule-hierarchy { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 16px 0; }
+.rule-hierarchy span { padding: 9px; border: 1px solid var(--line); border-radius: 9px; color: var(--soft); font-size: 8px; text-align: center; }
+.oliver-library { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+.oliver-library > div { padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(16,19,24,.6); }
+.oliver-library strong, .oliver-library span { display: block; }
+.oliver-library strong { font-size: 10px; color: var(--accent); }
+.oliver-library span { font-size: 9px; color: var(--soft); margin-top: 4px; }
+.oliver-library p { margin: 8px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.current-context-card { margin: 0 16px 8px; padding: 10px; display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; color: var(--accent); }
+.current-context-card strong, .current-context-card span { display: block; }
+.current-context-card strong { font-size: 9px; }
+.current-context-card span { margin-top: 3px; color: var(--muted); font-size: 8px; }
+
+@media (max-width: 1100px) {
+  .workspace-layout-v2 { grid-template-columns: minmax(0,1fr) 350px; }
+  .oliver-grid.three, .oliver-check-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .rule-hierarchy { grid-template-columns: repeat(3,1fr); }
+}
+
+@media (max-width: 900px) {
+  .workspace-layout-v2 { display: block; }
+  .oliver-workspace { padding: 20px 14px; }
+  .oliver-review { grid-template-columns: 1fr; }
+  .oliver-case-rail { position: static; display: flex; overflow-x: auto; gap: 5px; }
+  .oliver-case-rail small { display: none; }
+  .oliver-case-rail button { flex: 0 0 110px; }
+  .oliver-case-rail button + button { margin-top: 0; }
+  .collaborator { height: 70vh; min-height: 540px; }
+}
+
+@media (max-width: 560px) {
+  .oliver-titlebar { align-items: flex-start; }
+  .oliver-progress { display: none; }
+  .oliver-titlebar h1 { font-size: 30px; }
+  .oliver-tabs button { padding: 9px 9px; font-size: 9px; }
+  .oliver-case-head { align-items: flex-start; flex-direction: column; }
+  .oliver-chart-placeholder { min-height: 210px; padding: 18px; }
+  .oliver-grid.three, .oliver-grid.two, .oliver-check-grid { grid-template-columns: 1fr; }
+  .rule-hierarchy { grid-template-columns: repeat(2,1fr); }
+  .oliver-library { grid-template-columns: 1fr; }
+  .lock-row { align-items: flex-start; flex-direction: column; }
+  .lock-row > span { text-align: left; }
+}

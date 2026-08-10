@@ -1,40 +1,99 @@
-export const moods = ["curious", "focused", "calm", "bold"] as const;
-export const palettes = ["amber", "indigo", "mint", "rose"] as const;
-export const scenes = ["Studio", "Library", "Observatory", "Workshop"] as const;
+import type { DigitalOliverWorkspaceState } from "@/lib/digital-oliver";
+import { OLIVER_RULEBOOK_SUMMARY, selectedCase } from "@/lib/digital-oliver";
 
-export type Mood = (typeof moods)[number];
-export type Palette = (typeof palettes)[number];
-export type Scene = (typeof scenes)[number];
-
-export type OliverState = {
-  name: string;
-  scene: Scene;
-  mood: Mood;
-  palette: Palette;
-  energy: number;
-  focus: string;
-  note: string;
+export type TranscriptEntry = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: string;
+  mode: "voice" | "text";
 };
 
-export type OliverPatch = Partial<
-  Pick<OliverState, "scene" | "mood" | "palette" | "energy" | "focus" | "note">
->;
-
-export type Proposal = {
-  message: string;
-  observation: string;
-  changes: OliverPatch;
-  rationale: string;
-  source?: "ai" | "demo";
+export type WorkspaceContext = {
+  activeProject: string;
+  workspaceType: "digital-oliver";
+  currentWorkspaceObject: string;
+  activeView: string;
+  selectedObject: Record<string, unknown>;
+  visibleContent: Record<string, unknown>;
+  workspaceState: DigitalOliverWorkspaceState;
+  rulebook: typeof OLIVER_RULEBOOK_SUMMARY;
+  recentConversation: TranscriptEntry[];
 };
 
-export const initialOliver: OliverState = {
-  name: "Digital Oliver",
-  scene: "Studio",
-  mood: "curious",
-  palette: "amber",
-  energy: 3,
-  focus: "Turn a loose idea into something we can see and shape together.",
-  note: "Oliver should feel attentive, warm, and ready to build—not like a chatbot waiting for instructions.",
-};
+export function buildWorkspaceContext(
+  workspace: DigitalOliverWorkspaceState,
+  transcript: TranscriptEntry[],
+): WorkspaceContext {
+  const current = selectedCase(workspace);
+  const marketSnapshot = workspace.marketSnapshot ?? null;
 
+  // Research integrity: outcome statistics must not leak to Nexus through the
+  // full workspaceState before Michael locks the interpretation. The visible
+  // summary already hides them; sanitize the raw state as well.
+  const safeWorkspace: DigitalOliverWorkspaceState = current.locked || !marketSnapshot
+    ? workspace
+    : {
+        ...workspace,
+        marketSnapshot: {
+          ...marketSnapshot,
+          outcome: {},
+        },
+      };
+
+  return {
+    activeProject: workspace.workspaceName,
+    workspaceType: "digital-oliver",
+    currentWorkspaceObject: `Digital Oliver ${workspace.activeTab}`,
+    activeView: workspace.activeTab,
+    selectedObject: {
+      caseId: current.caseId,
+      caseRef: current.caseRef,
+      symbol: current.symbol,
+      sessionDate: current.sessionDate,
+      reviewState: current.reviewState,
+      locked: current.locked,
+    },
+    visibleContent: {
+      selectedTimeframe: workspace.selectedTimeframe,
+      fullDay: workspace.fullDay,
+      selectedDate: workspace.selectedDate,
+      modelSettings: workspace.modelSettings,
+      selectedCase: current,
+      marketEngine: marketSnapshot ? {
+        source: marketSnapshot.source,
+        symbol: marketSnapshot.symbol,
+        interval: marketSnapshot.interval,
+        sessionDate: marketSnapshot.sessionDate,
+        caseRef: marketSnapshot.caseRef,
+        candidate: marketSnapshot.candidate,
+        outcome: current.locked ? marketSnapshot.outcome : "hidden until interpretation lock",
+        chartBarCount: marketSnapshot.bars.length,
+        parameters: marketSnapshot.parameters,
+      } : null,
+      lockedCaseCount: workspace.cases.filter((item) => item.locked).length,
+      totalCaseCount: workspace.cases.length,
+    },
+    workspaceState: safeWorkspace,
+    rulebook: OLIVER_RULEBOOK_SUMMARY,
+    recentConversation: transcript.slice(-12),
+  };
+}
+
+export function contextInstructions(context: WorkspaceContext) {
+  return [
+    "You are Nexus, the embedded AI collaborator inside MichaelOS Nexus.",
+    "You are working beside Michael in the same Digital Oliver workspace, not operating as a detached chatbot.",
+    "The application supplies structured workspace state. Never ask Michael to re-describe information already present in that state.",
+    "Digital Oliver follows the hierarchy State → Location → Structure Box → Space → Power → Risk, then Oliver judgment, ranking, lock, and outcome validation.",
+    "Treat Python engine evidence and Michael's human judgment as separate sources. Never silently convert engine evidence into Michael's judgment.",
+    "When marketEngine is present, it comes from the migrated Digital Oliver Python market-data and analysis engine and is valid evidence for discussing the selected case.",
+    "Respect evidence discipline: if the selected case is not locked, do not reveal or use hidden outcome statistics.",
+    "If marketEngine is absent or reports an error, say so plainly rather than inventing candles or outcomes.",
+    "When discussing a selected case, refer naturally to its symbol, case reference, date, engine candidate, State, Structure Box, Space, notes, lock state, current model settings, and current view.",
+    "Be concise in voice unless the user asks for depth.",
+    "Do not claim you changed the workspace unless the application explicitly confirms a change.",
+    "Current structured workspace context follows:",
+    JSON.stringify(context),
+  ].join("\n");
+}
