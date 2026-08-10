@@ -2,315 +2,325 @@
 
 import {
   ArrowUp,
+  AudioLines,
   Check,
-  ChevronDown,
-  CircleDot,
+  Circle,
   Eye,
-  History,
-  Layers3,
-  MessageSquareText,
-  MousePointer2,
-  RotateCcw,
+  Mic,
+  MicOff,
+  Save,
   Sparkles,
-  WandSparkles,
+  Square,
 } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  initialOliver,
-  moods,
-  palettes,
-  scenes,
-  type OliverPatch,
-  type OliverState,
-  type Proposal,
+  buildWorkspaceContext,
+  contextInstructions,
+  initialWorkspace,
+  sectionKeys,
+  sectionLabels,
+  type OliverWorkspace,
+  type SectionKey,
+  type TranscriptEntry,
 } from "@/lib/nexus";
 
-type Activity = { actor: "you" | "nexus"; text: string };
+type VoiceState = "ready" | "connecting" | "listening" | "thinking" | "speaking" | "error";
 
-const starters = [
-  "Make Oliver feel more focused",
-  "Move him into a late-night studio",
-  "Give the scene more energy",
-];
+const WORKSPACE_KEY = "michaelos-nexus-workspace-v1";
+const TRANSCRIPT_KEY = "michaelos-nexus-transcript-v1";
 
-const paletteLabels: Record<OliverState["palette"], string> = {
-  amber: "Warm amber",
-  indigo: "Deep indigo",
-  mint: "Quiet mint",
-  rose: "Electric rose",
-};
+function now() {
+  return new Date().toISOString();
+}
 
-function describePatch(patch: OliverPatch) {
-  return Object.entries(patch)
-    .map(([key, value]) => `${key} → ${value}`)
-    .join(" · ");
+function makeEntry(role: TranscriptEntry["role"], text: string, mode: TranscriptEntry["mode"]): TranscriptEntry {
+  return { id: crypto.randomUUID(), role, text, createdAt: now(), mode };
 }
 
 export default function Home() {
-  const [oliver, setOliver] = useState(initialOliver);
-  const [selected, setSelected] = useState("Digital Oliver");
-  const [prompt, setPrompt] = useState("");
-  const [proposal, setProposal] = useState<Proposal | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [activity, setActivity] = useState<Activity[]>([
-    { actor: "nexus", text: "I’m here with the full Oliver workspace in view." },
-    { actor: "you", text: "Opened Digital Oliver in the shared workspace." },
-  ]);
+  const [workspace, setWorkspace] = useState<OliverWorkspace>(initialWorkspace);
+  const [selectedSection, setSelectedSection] = useState<SectionKey>("identity");
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [input, setInput] = useState("");
+  const [textLoading, setTextLoading] = useState(false);
+  const [voiceState, setVoiceState] = useState<VoiceState>("ready");
+  const [voiceError, setVoiceError] = useState("");
+  const [hydrated, setHydrated] = useState(false);
 
-  const contextSummary = `${oliver.scene} · ${oliver.mood} · energy ${oliver.energy}/5`;
+  const peerRef = useRef<RTCPeerConnection | null>(null);
+  const channelRef = useRef<RTCDataChannel | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const assistantDraftRef = useRef("");
 
-  function updateWorkspace(patch: OliverPatch, label: string) {
-    setOliver((current) => ({ ...current, ...patch }));
-    setActivity((current) => [{ actor: "you" as const, text: label }, ...current].slice(0, 8));
-  }
+  useEffect(() => {
+    try {
+      const savedWorkspace = localStorage.getItem(WORKSPACE_KEY);
+      const savedTranscript = localStorage.getItem(TRANSCRIPT_KEY);
+      if (savedWorkspace) setWorkspace(JSON.parse(savedWorkspace));
+      if (savedTranscript) setTranscript(JSON.parse(savedTranscript));
+    } catch {
+      // Corrupt local state should never prevent Nexus from opening.
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
 
-  async function askNexus(text: string) {
-    const nextPrompt = text.trim();
-    if (!nextPrompt || loading) return;
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspace));
+  }, [workspace, hydrated]);
 
-    setPrompt("");
-    setError("");
-    setProposal(null);
-    setLoading(true);
-    setActivity((current) => [{ actor: "you" as const, text: nextPrompt }, ...current].slice(0, 8));
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(TRANSCRIPT_KEY, JSON.stringify(transcript.slice(-100)));
+  }, [transcript, hydrated]);
+
+  const context = useMemo(
+    () => buildWorkspaceContext(workspace, selectedSection, transcript),
+    [workspace, selectedSection, transcript],
+  );
+
+  const updateSection = useCallback((key: SectionKey, value: string) => {
+    setWorkspace((current) => ({
+      ...current,
+      updatedAt: now(),
+      sections: { ...current.sections, [key]: value },
+    }));
+  }, []);
+
+  useEffect(() => {
+    const channel = channelRef.current;
+    if (!channel || channel.readyState !== "open") return;
+    channel.send(JSON.stringify({
+      type: "session.update",
+      session: { type: "realtime", instructions: contextInstructions(context) },
+    }));
+  }, [context]);
+
+  async function sendText(message: string) {
+    const clean = message.trim();
+    if (!clean || textLoading) return;
+
+    const userEntry = makeEntry("user", clean, "text");
+    const contextForRequest = buildWorkspaceContext(workspace, selectedSection, [...transcript, userEntry]);
+    setTranscript((current) => [...current, userEntry]);
+    setInput("");
+    setTextLoading(true);
 
     try {
       const response = await fetch("/api/collaborate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: nextPrompt,
-          workspace: oliver,
-          selection: selected,
-          recentActivity: activity.map((item) => `${item.actor}: ${item.text}`),
-        }),
+        body: JSON.stringify({ message: clean, context: contextForRequest }),
       });
-
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Nexus could not respond.");
-
-      setProposal(data);
-      setActivity((current) => [
-        { actor: "nexus" as const, text: `Proposed: ${describePatch(data.changes)}` },
+      setTranscript((current) => [...current, makeEntry("assistant", data.text, "text")]);
+    } catch (error) {
+      setTranscript((current) => [
         ...current,
-      ].slice(0, 8));
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Nexus could not respond.");
+        makeEntry("assistant", error instanceof Error ? error.message : "Nexus could not respond.", "text"),
+      ]);
     } finally {
-      setLoading(false);
+      setTextLoading(false);
     }
   }
 
-  function submit(event: FormEvent) {
+  function onSubmit(event: FormEvent) {
     event.preventDefault();
-    void askNexus(prompt);
+    void sendText(input);
   }
 
-  function applyProposal() {
-    if (!proposal) return;
-    setOliver((current) => ({ ...current, ...proposal.changes }));
-    setActivity((current) => [
-      { actor: "you" as const, text: `Applied Nexus proposal: ${describePatch(proposal.changes)}` },
-      ...current,
-    ].slice(0, 8));
-    setProposal(null);
+  function handleRealtimeEvent(raw: string) {
+    try {
+      const event = JSON.parse(raw);
+      const type = String(event.type || "");
+
+      if (type.includes("input_audio_buffer.speech_started")) setVoiceState("listening");
+      if (type.includes("input_audio_buffer.speech_stopped")) setVoiceState("thinking");
+      if (type === "response.created") setVoiceState("thinking");
+      if (type.includes("response.output_audio.delta") || type.includes("response.audio.delta")) setVoiceState("speaking");
+      if (type === "response.done") setVoiceState("listening");
+
+      if (type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
+        setTranscript((current) => [...current, makeEntry("user", event.transcript.trim(), "voice")]);
+      }
+
+      if ((type === "response.output_audio_transcript.delta" || type === "response.audio_transcript.delta") && event.delta) {
+        assistantDraftRef.current += event.delta;
+      }
+
+      if (type === "response.output_audio_transcript.done" || type === "response.audio_transcript.done") {
+        const text = (event.transcript || assistantDraftRef.current).trim();
+        assistantDraftRef.current = "";
+        if (text) setTranscript((current) => [...current, makeEntry("assistant", text, "voice")]);
+      }
+    } catch {
+      // Ignore non-JSON data channel payloads.
+    }
   }
 
-  function resetWorkspace() {
-    setOliver(initialOliver);
-    setProposal(null);
-    setActivity((current) => [{ actor: "you" as const, text: "Reset Oliver to the opening state." }, ...current].slice(0, 8));
+  async function startVoice() {
+    if (peerRef.current) return;
+    setVoiceError("");
+    setVoiceState("connecting");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      const pc = new RTCPeerConnection();
+      peerRef.current = pc;
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      const audio = new Audio();
+      audio.autoplay = true;
+      audioRef.current = audio;
+      pc.ontrack = (event) => {
+        audio.srcObject = event.streams[0];
+        void audio.play().catch(() => undefined);
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected") setVoiceState("listening");
+        if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+          if (pc.connectionState !== "closed") setVoiceState("error");
+        }
+      };
+
+      const channel = pc.createDataChannel("oai-events");
+      channelRef.current = channel;
+      channel.onmessage = (event) => handleRealtimeEvent(event.data);
+      channel.onopen = () => setVoiceState("listening");
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      const response = await fetch("/api/realtime", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sdp: offer.sdp, context }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Nexus could not start voice.");
+      }
+
+      const answer = await response.text();
+      await pc.setRemoteDescription({ type: "answer", sdp: answer });
+    } catch (error) {
+      stopVoice();
+      setVoiceState("error");
+      setVoiceError(error instanceof Error ? error.message : "Microphone or realtime connection failed.");
+    }
   }
+
+  function stopVoice() {
+    channelRef.current?.close();
+    channelRef.current = null;
+    peerRef.current?.close();
+    peerRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (audioRef.current) audioRef.current.srcObject = null;
+    audioRef.current = null;
+    assistantDraftRef.current = "";
+    setVoiceState("ready");
+  }
+
+  const voiceActive = peerRef.current !== null && voiceState !== "error";
+  const statusLabel = voiceState === "ready" ? "Ready" : voiceState[0].toUpperCase() + voiceState.slice(1);
 
   return (
-    <main className={`app-shell palette-${oliver.palette}`}>
+    <main className="nexus-shell">
       <header className="topbar">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true"><span>N</span></div>
-          <div>
-            <div className="brand-name">MichaelOS <strong>Nexus</strong></div>
-            <div className="brand-subtitle">Shared intelligence workspace</div>
-          </div>
+        <div className="brand">
+          <span className="brand-mark"><Sparkles size={17} /></span>
+          <div><strong>MichaelOS Nexus</strong><small>Shared voice workspace</small></div>
         </div>
-
-        <div className="object-switcher" aria-label="Current workspace object">
-          <span className="object-avatar">O</span>
-          <span><small>Working on</small>{oliver.name}</span>
-          <ChevronDown size={15} />
-        </div>
-
-        <div className="presence">
-          <div className="presence-faces" aria-label="Michael and Nexus are present">
-            <span className="face michael">M</span>
-            <span className="face nexus"><Sparkles size={13} /></span>
-          </div>
-          <div><strong>2 present</strong><span>Michael + Nexus</span></div>
-          <span className="live-dot" />
-        </div>
+        <div className="presence"><span className="presence-dot" /> Michael + Nexus · Digital Oliver</div>
       </header>
 
-      <section className="context-ribbon" aria-label="Shared context status">
-        <div className="context-live"><Eye size={14} /><strong>Nexus sees what you see</strong></div>
-        <div className="context-items">
-          <span><CircleDot size={12} /> {selected}</span>
-          <span><Layers3 size={12} /> Entire workspace</span>
-          <span><History size={12} /> Recent changes</span>
-        </div>
-        <div className="context-state">{contextSummary}</div>
-      </section>
+      <div className="context-strip">
+        <div><Eye size={14} /><strong>Nexus has workspace context</strong></div>
+        <span>Selected: {sectionLabels[selectedSection]}</span>
+        <span>Persistent locally</span>
+        <span className="saved"><Check size={13} /> Saved</span>
+      </div>
 
-      <div className="workspace-grid">
-        <aside className="rail" aria-label="Workspace tools">
-          <button className="rail-button active" aria-label="Select"><MousePointer2 size={18} /></button>
-          <button className="rail-button" aria-label="Layers"><Layers3 size={18} /></button>
-          <button className="rail-button" aria-label="Comments"><MessageSquareText size={18} /></button>
-          <div className="rail-spacer" />
-          <button className="rail-button" onClick={resetWorkspace} aria-label="Reset workspace"><RotateCcw size={18} /></button>
-        </aside>
-
-        <section className="canvas-column">
-          <div className="canvas-header">
-            <div>
-              <span className="eyebrow">Shared object / V1</span>
-              <h1>Digital Oliver</h1>
-            </div>
-            <div className="canvas-actions">
-              <button className="quiet-button"><History size={15} /> Version 01</button>
-              <button className="quiet-button"><span className="autosave-dot" /> Saved</button>
-            </div>
+      <div className="workspace-layout">
+        <section className="workspace">
+          <div className="workspace-heading">
+            <div><span className="eyebrow">ACTIVE PROJECT</span><h1>Digital Oliver</h1><p>A living model of trading philosophy, rules, knowledge, and behavior.</p></div>
+            <div className="workspace-save"><Save size={14} /> Auto-saved</div>
           </div>
 
-          <div className="canvas-stage">
-            <div className="grid-lines" />
-            <button
-              className={`oliver-object ${selected === "Digital Oliver" ? "selected" : ""}`}
-              onClick={() => setSelected("Digital Oliver")}
-              aria-label="Select Digital Oliver"
-            >
-              <div className="selection-label"><MousePointer2 size={12} /> Nexus is looking here</div>
-              <span className="selection-handle tl" /><span className="selection-handle tr" />
-              <span className="selection-handle bl" /><span className="selection-handle br" />
-              <div className="oliver-shadow" />
-              <div className="oliver-glow" />
-              <div className="oliver-body">
-                <div className="oliver-antenna"><span /></div>
-                <div className="oliver-face">
-                  <span className="eye left" /><span className="eye right" />
-                  <span className={`mouth mood-${oliver.mood}`} />
-                </div>
-                <div className="oliver-core"><Sparkles size={24} /></div>
-              </div>
-            </button>
+          <div className="document-shell">
+            <nav className="section-nav" aria-label="Digital Oliver sections">
+              {sectionKeys.map((key) => (
+                <button key={key} className={selectedSection === key ? "active" : ""} onClick={() => setSelectedSection(key)}>
+                  <span>{sectionLabels[key]}</span><Circle size={7} fill="currentColor" />
+                </button>
+              ))}
+            </nav>
 
-            <div className="scene-card scene-name">
-              <small>Scene</small><strong>{oliver.scene}</strong>
-            </div>
-            <button type="button" className="scene-card scene-focus" onClick={() => setSelected("Oliver's focus")}>
-              <small>Current focus</small><p>{oliver.focus}</p>
-            </button>
-            <div className="energy-meter" aria-label={`Energy ${oliver.energy} out of 5`}>
-              <small>Energy</small>
-              <div>{[1, 2, 3, 4, 5].map((step) => <span key={step} className={step <= oliver.energy ? "filled" : ""} />)}</div>
-            </div>
-          </div>
-
-          <div className="inspector-bar">
-            <label>
-              <span>Mood</span>
-              <select value={oliver.mood} onChange={(e) => updateWorkspace({ mood: e.target.value as OliverState["mood"] }, `Changed Oliver’s mood to ${e.target.value}.`)}>
-                {moods.map((mood) => <option key={mood}>{mood}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>Scene</span>
-              <select value={oliver.scene} onChange={(e) => updateWorkspace({ scene: e.target.value as OliverState["scene"] }, `Moved Oliver to the ${e.target.value}.`)}>
-                {scenes.map((scene) => <option key={scene}>{scene}</option>)}
-              </select>
-            </label>
-            <div className="palette-picker">
-              <span>Palette</span>
-              <div>{palettes.map((palette) => (
-                <button key={palette} title={paletteLabels[palette]} aria-label={paletteLabels[palette]} className={`swatch ${palette} ${oliver.palette === palette ? "selected" : ""}`} onClick={() => updateWorkspace({ palette }, `Changed the palette to ${paletteLabels[palette]}.`)} />
-              ))}</div>
-            </div>
-            <label className="energy-control">
-              <span>Energy <strong>{oliver.energy}</strong></span>
-              <input type="range" min="1" max="5" value={oliver.energy} onChange={(e) => updateWorkspace({ energy: Number(e.target.value) }, `Set Oliver’s energy to ${e.target.value}.`)} />
-            </label>
+            <article className="editor">
+              <div className="editor-meta"><span>{sectionLabels[selectedSection]}</span><small>Shared object · editable</small></div>
+              <textarea
+                aria-label={`${sectionLabels[selectedSection]} content`}
+                value={workspace.sections[selectedSection]}
+                onChange={(event) => updateSection(selectedSection, event.target.value)}
+                spellCheck
+              />
+              <div className="editor-foot">Nexus receives this section plus the complete Digital Oliver object and recent conversation.</div>
+            </article>
           </div>
         </section>
 
-        <aside className="ai-panel">
-          <div className="ai-header">
-            <div className="ai-identity"><span><Sparkles size={18} /></span><div><strong>Nexus</strong><small>Beside you, in context</small></div></div>
-            <span className="ai-status"><i /> Ready</span>
+        <aside className="collaborator">
+          <div className="collaborator-head">
+            <div className="ai-avatar"><Sparkles size={18} /></div>
+            <div><strong>Nexus</strong><small>Beside you, in context</small></div>
+            <span className={`voice-status state-${voiceState}`}><i />{statusLabel}</span>
           </div>
 
-          <div className="conversation">
-            <div className="ai-message opening">
-              <div className="message-icon"><Eye size={14} /></div>
-              <div>
-                <p>I’m with you in <strong>{oliver.scene}</strong>. Oliver feels <strong>{oliver.mood}</strong>, and you currently have <strong>{selected}</strong> selected.</p>
-                <span>I already have the workspace context—you don’t need to explain the screen.</span>
-              </div>
+          <div className="voice-zone">
+            <button className={`voice-button ${voiceActive ? "active" : ""}`} onClick={() => voiceActive ? stopVoice() : void startVoice()}>
+              {voiceActive ? <Square size={20} fill="currentColor" /> : voiceState === "error" ? <MicOff size={24} /> : <Mic size={26} />}
+            </button>
+            <div>
+              <strong>{voiceActive ? "Voice session live" : "Talk to Nexus"}</strong>
+              <span>{voiceActive ? "Speak naturally. Nexus already has the workspace." : "Start a realtime conversation in this workspace."}</span>
             </div>
+            {voiceActive && <AudioLines className="wave-icon" size={24} />}
+          </div>
+          {voiceError && <div className="voice-error">{voiceError}</div>}
 
-            {!proposal && !loading && (
-              <div className="starter-block">
-                <small>Try shaping the object together</small>
-                {starters.map((starter) => <button key={starter} onClick={() => void askNexus(starter)}><WandSparkles size={14} />{starter}</button>)}
+          <div className="transcript" aria-live="polite">
+            {transcript.length === 0 ? (
+              <div className="empty-thread">
+                <Eye size={20} />
+                <strong>I’m looking at Digital Oliver with you.</strong>
+                <p>Ask about the selected section, challenge an idea, or discuss what should change. You do not need to paste the workspace into the conversation.</p>
               </div>
-            )}
-
-            {loading && (
-              <div className="thinking-card">
-                <span className="thinking-orb"><Sparkles size={17} /></span>
-                <div><strong>Looking at Oliver…</strong><span>Reading the object, selection, and recent changes</span></div>
-                <i /><i /><i />
+            ) : transcript.map((entry) => (
+              <div key={entry.id} className={`message ${entry.role}`}>
+                <div className="message-meta"><span>{entry.role === "user" ? "Michael" : "Nexus"}</span><small>{entry.mode}</small></div>
+                <p>{entry.text}</p>
               </div>
-            )}
-
-            {proposal && (
-              <div className="proposal-card">
-                <div className="proposal-kicker"><Sparkles size={13} /> A thought, in context {proposal.source === "demo" && <span>Demo mode</span>}</div>
-                <p>{proposal.message}</p>
-                <div className="observation"><Eye size={14} /><span><small>What I noticed</small>{proposal.observation}</span></div>
-                <div className="change-list">
-                  {Object.entries(proposal.changes).map(([key, value]) => (
-                    <div key={key}><span>{key}</span><strong>{String(value)}</strong></div>
-                  ))}
-                </div>
-                <p className="rationale">{proposal.rationale}</p>
-                <div className="proposal-actions">
-                  <button className="apply-button" onClick={applyProposal}><Check size={15} /> Apply to Oliver</button>
-                  <button className="dismiss-button" onClick={() => setProposal(null)}>Not this</button>
-                </div>
-              </div>
-            )}
-
-            {error && <div className="error-message">{error}</div>}
-
-            <div className="activity-thread">
-              <small>Shared activity</small>
-              {activity.slice(0, 4).map((item, index) => (
-                <div key={`${item.text}-${index}`} className={item.actor}>
-                  <span>{item.actor === "you" ? "M" : <Sparkles size={10} />}</span>
-                  <p>{item.text}</p>
-                </div>
-              ))}
-            </div>
+            ))}
+            {textLoading && <div className="thinking"><Sparkles size={15} /> Nexus is thinking with the workspace in view…</div>}
           </div>
 
-          <form className="composer" onSubmit={submit}>
-            <div className="composer-context"><CircleDot size={11} /> Talking about: {selected}</div>
-            <div className="composer-box">
-              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Shape Oliver with Nexus…" rows={2} onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void askNexus(prompt); }
+          <form className="composer" onSubmit={onSubmit}>
+            <label><span className="context-pill"><Eye size={11} /> {sectionLabels[selectedSection]}</span>Text is secondary; voice is primary.</label>
+            <div className="composer-row">
+              <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask Nexus about what you’re working on…" rows={2} onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendText(input); }
               }} />
-              <button type="submit" disabled={!prompt.trim() || loading} aria-label="Send to Nexus"><ArrowUp size={17} /></button>
+              <button type="submit" disabled={!input.trim() || textLoading} aria-label="Send"><ArrowUp size={18} /></button>
             </div>
-            <p><Sparkles size={11} /> Nexus receives the live object context with every message</p>
           </form>
         </aside>
       </div>
