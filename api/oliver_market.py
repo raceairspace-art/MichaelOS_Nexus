@@ -19,7 +19,10 @@ except ImportError:
 
 
 def _period(interval: str) -> str:
-    return "7d" if interval == "1m" else "3mo"
+    # Yahoo intraday history is constrained. 1m is only available for the
+    # most recent week, while 5m/15m are reliably available over a rolling
+    # ~60-day window. Requesting 3mo can make yfinance reject the call.
+    return "7d" if interval == "1m" else "60d"
 
 
 def _clean(value):
