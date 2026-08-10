@@ -8,9 +8,14 @@ from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
 
-from config import MAG7
-from market_data import ensure_symbol, session_dates
-from oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case, visible_slice
+try:
+    from .config import MAG7
+    from .market_data import ensure_symbol, session_dates
+    from .oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case, visible_slice
+except ImportError:
+    from config import MAG7
+    from market_data import ensure_symbol, session_dates
+    from oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case, visible_slice
 
 
 def _period(interval: str) -> str:
