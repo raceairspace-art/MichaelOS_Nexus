@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import DATA_DIR
+try:
+    from .config import DATA_DIR
+except ImportError:
+    from config import DATA_DIR
 
 
 def _yf():
@@ -55,12 +58,6 @@ def save_cache(symbol: str, interval: str, df: pd.DataFrame) -> Path:
 
 
 def merge_cache(old: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
-    """Merge without rewriting completed historical bars.
-
-    Completed sessions are treated as immutable research evidence once cached. The
-    current New York trading date is allowed to refresh so still-forming intraday
-    bars can update normally.
-    """
     if old is None or old.empty:
         return normalize_index(new)
     if new is None or new.empty:
@@ -69,21 +66,16 @@ def merge_cache(old: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
     old = normalize_index(old)
     new = normalize_index(new)
     today_ny = pd.Timestamp.now(tz="America/New_York").date()
-
     old_dates = pd.Index(old.index.tz_convert("America/New_York").date)
     new_dates = pd.Index(new.index.tz_convert("America/New_York").date)
-
     old_hist = old.loc[old_dates < today_ny]
     old_live = old.loc[old_dates >= today_ny]
     new_hist = new.loc[new_dates < today_ny]
     new_live = new.loc[new_dates >= today_ny]
-
     historical = pd.concat([old_hist, new_hist])
     historical = historical[~historical.index.duplicated(keep="first")]
-
     live = pd.concat([old_live, new_live])
     live = live[~live.index.duplicated(keep="last")]
-
     return pd.concat([historical, live]).sort_index()
 
 
