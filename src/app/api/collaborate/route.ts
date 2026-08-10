@@ -1,33 +1,11 @@
 import { z } from "zod";
-import { contextInstructions, sectionKeys } from "@/lib/nexus";
+import { contextInstructions, type WorkspaceContext } from "@/lib/nexus";
 
 export const maxDuration = 30;
 
-const transcriptSchema = z.object({
-  id: z.string(),
-  role: z.enum(["user", "assistant"]),
-  text: z.string().max(4000),
-  createdAt: z.string(),
-  mode: z.enum(["voice", "text"]),
-});
-
-const workspaceSchema = z.object({
-  projectId: z.literal("digital-oliver"),
-  projectName: z.literal("Digital Oliver"),
-  updatedAt: z.string(),
-  sections: z.record(z.enum(sectionKeys), z.string().max(12000)),
-});
-
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
-  context: z.object({
-    activeProject: z.string(),
-    currentWorkspaceObject: z.string(),
-    selectedSection: z.enum(sectionKeys),
-    visibleContent: z.string().max(12000),
-    workspace: workspaceSchema,
-    recentConversation: z.array(transcriptSchema).max(12),
-  }),
+  context: z.record(z.string(), z.unknown()),
 });
 
 export async function POST(request: Request) {
@@ -45,7 +23,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const { message, context } = parsed.data;
+    const { message } = parsed.data;
+    const context = parsed.data.context as unknown as WorkspaceContext;
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
