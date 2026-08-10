@@ -85,6 +85,8 @@ export default function Home() {
   const streamRef = useRef<MediaStream | null>(null);
   const speakerRef = useRef<HTMLAudioElement | null>(null);
   const speakerUrlRef = useRef<string | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const speechSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const assistantDraftRef = useRef("");
 
   useEffect(() => {
@@ -186,12 +188,16 @@ export default function Home() {
     try {
       await audio.play();
       audio.pause();
-      setAudioStatus("Speaker authorized");
     } finally {
       audio.removeAttribute("src");
       audio.load();
       URL.revokeObjectURL(url);
     }
+
+    const audioContext = new AudioContext();
+    await audioContext.resume();
+    audioContextRef.current = audioContext;
+    setAudioStatus(`Speaker authorized (${audioContext.state})`);
   }
 
   function speakWithBrowser(text: string) {
@@ -202,21 +208,25 @@ export default function Home() {
     utterance.pitch = 1;
     utterance.volume = 1;
     utterance.onstart = () => {
+      streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = false; });
       setVoiceState("speaking");
       setAudioStatus("Playing browser voice fallback");
     };
     utterance.onend = () => {
+      streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = true; });
       setVoiceState("listening");
       setAudioStatus("Browser voice finished");
     };
-    utterance.onerror = () => setVoiceError("Browser speech synthesis also failed.");
+    utterance.onerror = () => {
+      streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = true; });
+      setVoiceError("Browser speech synthesis also failed.");
+    };
     window.speechSynthesis.speak(utterance);
     return true;
   }
 
   async function speakResponse(text: string) {
-    const audio = speakerRef.current;
-    if (!audio || !text.trim()) return;
+    if (!text.trim()) return;
 
     try {
       setAudioStatus("Generating Nexus voice");
@@ -232,18 +242,29 @@ export default function Home() {
 
       const blob = await response.blob();
       if (blob.size < 100) throw new Error("OpenAI returned an empty speech file.");
-      clearSpeakerUrl();
-      const url = URL.createObjectURL(blob);
-      speakerUrlRef.current = url;
 
-      audio.pause();
-      audio.srcObject = null;
-      audio.src = url;
-      audio.muted = false;
-      audio.volume = 1;
+      const audioContext = audioContextRef.current;
+      if (!audioContext) throw new Error("Nexus audio engine is unavailable.");
+      if (audioContext.state !== "running") await audioContext.resume();
+
+      const arrayBuffer = await blob.arrayBuffer();
+      const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+      speechSourceRef.current?.stop();
+
+      const source = audioContext.createBufferSource();
+      source.buffer = decoded;
+      source.connect(audioContext.destination);
+      speechSourceRef.current = source;
+      streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = false; });
       setVoiceState("speaking");
-      setAudioStatus(`Playing OpenAI voice (${Math.round(blob.size / 1024)} KB)`);
-      await audio.play();
+      setAudioStatus(`Playing decoded OpenAI voice (${decoded.duration.toFixed(1)}s)`);
+      source.onended = () => {
+        speechSourceRef.current = null;
+        streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = true; });
+        setVoiceState("listening");
+        setAudioStatus("Nexus voice finished");
+      };
+      source.start(0);
     } catch (error) {
       const message = error instanceof Error ? error.message : "OpenAI speech playback failed.";
       setVoiceError(`OpenAI voice failed: ${message}`);
@@ -311,8 +332,6 @@ export default function Home() {
     setVoiceState("connecting");
 
     try {
-      // Prime the exact element that will later play OpenAI TTS. This happens
-      // immediately from the user's Talk click, before microphone/network waits.
       await primeSpeaker();
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -322,10 +341,8 @@ export default function Home() {
       peerRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      // Keep the incoming Realtime media track negotiated, but do not attach the
-      // currently-silent track to our proven speaker element. V1 output uses TTS.
       pc.ontrack = (event) => {
-        setAudioStatus(`Realtime ${event.track.kind} track negotiated; TTS output active`);
+        setAudioStatus(`Realtime ${event.track.kind} track negotiated; decoded TTS output active`);
       };
 
       pc.onconnectionstatechange = () => {
@@ -340,7 +357,7 @@ export default function Home() {
       channel.onmessage = (event) => handleRealtimeEvent(event.data);
       channel.onopen = () => {
         setVoiceState("listening");
-        setAudioStatus("Voice input ready; OpenAI TTS output enabled");
+        setAudioStatus("Voice input ready; decoded OpenAI voice enabled");
       };
 
       const offer = await pc.createOffer();
@@ -373,6 +390,14 @@ export default function Home() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (speechSourceRef.current) {
+      try { speechSourceRef.current.stop(); } catch {}
+      speechSourceRef.current = null;
+    }
+    if (audioContextRef.current) {
+      void audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
     if (speakerRef.current) {
       speakerRef.current.pause();
       speakerRef.current.srcObject = null;
