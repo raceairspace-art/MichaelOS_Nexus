@@ -2,23 +2,35 @@ import { z } from "zod";
 
 export const maxDuration = 30;
 
+const nullableNumber = z.number().finite().nullable().optional().default(null);
+const optionalBoolean = z.boolean().optional().default(false);
+
 const barSchema = z.object({
-  time: z.string(), open: z.number(), high: z.number(), low: z.number(), close: z.number(),
-  volume: z.number().nullable(), sMA20: z.number().nullable(), sMA200: z.number().nullable(),
-  boxHigh: z.number().nullable(), boxLow: z.number().nullable(), bullElephant: z.boolean(),
-  bearElephant: z.boolean(), premarket: z.boolean(),
-});
+  time: z.string(),
+  open: z.number().finite(),
+  high: z.number().finite(),
+  low: z.number().finite(),
+  close: z.number().finite(),
+  volume: nullableNumber,
+  sMA20: nullableNumber,
+  sMA200: nullableNumber,
+  boxHigh: nullableNumber,
+  boxLow: nullableNumber,
+  bullElephant: optionalBoolean,
+  bearElephant: optionalBoolean,
+  premarket: optionalBoolean,
+}).passthrough();
 
 const requestSchema = z.object({
   symbol: z.string().min(1).max(8),
   sessionDate: z.string(),
   timeframe: z.enum(["1m", "5m", "15m"]),
-  decisionTime: z.string().nullable(),
-  modelVersion: z.string(),
-  parameters: z.record(z.string(), z.number()),
-  candidate: z.record(z.string(), z.unknown()),
-  bars: z.array(barSchema).min(1).max(500),
-});
+  decisionTime: z.string().nullable().optional().default(null),
+  modelVersion: z.string().min(1),
+  parameters: z.record(z.string(), z.unknown()).optional().default({}),
+  candidate: z.record(z.string(), z.unknown()).optional().default({}),
+  bars: z.array(barSchema).min(1).max(600),
+}).passthrough();
 
 const reviewSchema = z.object({
   stateClassification: z.string(),
@@ -111,10 +123,19 @@ function outputText(data: any) {
     .join("");
 }
 
+function validationSummary(error: z.ZodError) {
+  return error.issues.slice(0, 5).map(issue => `${issue.path.join(".") || "payload"}: ${issue.message}`).join("; ");
+}
+
 export async function POST(request: Request) {
   try {
-    const parsed = requestSchema.safeParse(await request.json());
-    if (!parsed.success) return Response.json({ error: "Incomplete Oliver decision snapshot." }, { status: 400 });
+    const body = await request.json();
+    const parsed = requestSchema.safeParse(body);
+    if (!parsed.success) {
+      const detail = validationSummary(parsed.error);
+      console.error("Oliver decision snapshot rejected", detail, body && typeof body === "object" ? Object.keys(body) : typeof body);
+      return Response.json({ error: `Oliver decision snapshot validation failed: ${detail}` }, { status: 400 });
+    }
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return Response.json({ error: "OPENAI_API_KEY is not configured." }, { status: 503 });
@@ -160,7 +181,7 @@ export async function POST(request: Request) {
     if (!response.ok) {
       const detail = await response.text();
       console.error("Oliver AI review failed", response.status, detail);
-      return Response.json({ error: "Nexus could not complete the automatic Oliver review." }, { status: 502 });
+      return Response.json({ error: `Nexus automatic Oliver review failed (${response.status}).` }, { status: 502 });
     }
 
     const data = await response.json();
@@ -170,7 +191,7 @@ export async function POST(request: Request) {
     const review = reviewSchema.safeParse(json);
     if (!review.success) {
       console.error("Oliver AI review schema mismatch", review.error.flatten());
-      return Response.json({ error: "Nexus returned an incomplete Oliver review." }, { status: 502 });
+      return Response.json({ error: `Nexus returned an incomplete Oliver review: ${validationSummary(review.error)}` }, { status: 502 });
     }
 
     return Response.json({
