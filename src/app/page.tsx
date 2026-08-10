@@ -45,12 +45,13 @@ export default function Home() {
   const [textLoading, setTextLoading] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("ready");
   const [voiceError, setVoiceError] = useState("");
-  const [audioStatus, setAudioStatus] = useState("Browser voice output ready");
+  const [audioStatus, setAudioStatus] = useState("Realtime audio ready");
   const [hydrated, setHydrated] = useState(false);
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const assistantDraftRef = useRef("");
 
   useEffect(() => {
@@ -132,35 +133,6 @@ export default function Home() {
     void sendText(input);
   }
 
-  function speakResponse(text: string) {
-    if (!text.trim() || !("speechSynthesis" in window)) return;
-
-    // Intentionally mirror the exact browser behavior that worked in DevTools:
-    // use Chrome/Windows' default voice with no explicit voice selection.
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    utterance.volume = 1;
-
-    utterance.onstart = () => {
-      streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = false; });
-      setVoiceState("speaking");
-      setAudioStatus("Speaking with browser default voice");
-    };
-    utterance.onend = () => {
-      streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = true; });
-      setVoiceState("listening");
-      setAudioStatus("Browser voice ready");
-    };
-    utterance.onerror = (event) => {
-      streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = true; });
-      setVoiceState("error");
-      setVoiceError(`Browser voice failed: ${event.error}`);
-    };
-
-    window.speechSynthesis.speak(utterance);
-  }
-
   function handleRealtimeEvent(raw: string) {
     try {
       const event = JSON.parse(raw);
@@ -169,7 +141,13 @@ export default function Home() {
       if (type.includes("input_audio_buffer.speech_started")) setVoiceState("listening");
       if (type.includes("input_audio_buffer.speech_stopped")) setVoiceState("thinking");
       if (type === "response.created") setVoiceState("thinking");
-      if (type === "response.done") setVoiceState((current) => current === "speaking" ? current : "listening");
+      if (type.includes("response.output_audio.delta") || type.includes("response.audio.delta")) setVoiceState("speaking");
+      if (type.includes("output_audio_buffer.started")) {
+        setVoiceState("speaking");
+        setAudioStatus("Nexus is speaking");
+      }
+      if (type.includes("output_audio_buffer.stopped")) setAudioStatus("Realtime audio connected");
+      if (type === "response.done") setVoiceState("listening");
 
       if (type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
         setTranscript((current) => [...current, makeEntry("user", event.transcript.trim(), "voice")]);
@@ -182,28 +160,30 @@ export default function Home() {
       if (type === "response.output_audio_transcript.done" || type === "response.audio_transcript.done") {
         const text = (event.transcript || assistantDraftRef.current).trim();
         assistantDraftRef.current = "";
-        if (text) {
-          setTranscript((current) => [...current, makeEntry("assistant", text, "voice")]);
-          speakResponse(text);
-        }
+        if (text) setTranscript((current) => [...current, makeEntry("assistant", text, "voice")]);
       }
     } catch {
       // Ignore non-JSON data channel payloads.
     }
   }
 
-  function testSpeaker() {
-    setVoiceError("");
-    speakResponse("Michael, this is the Nexus voice test.");
-  }
-
   async function startVoice() {
     if (peerRef.current) return;
     setVoiceError("");
+    setAudioStatus("Connecting realtime audio");
     setVoiceState("connecting");
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audio = audioRef.current;
+      if (!audio) throw new Error("Nexus audio output is unavailable.");
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       streamRef.current = stream;
 
       const pc = new RTCPeerConnection();
@@ -211,23 +191,35 @@ export default function Home() {
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
       pc.ontrack = (event) => {
-        setAudioStatus(`Realtime ${event.track.kind} negotiated; browser speech output active`);
+        const remoteStream = event.streams[0] ?? new MediaStream([event.track]);
+        audio.srcObject = remoteStream;
+        audio.muted = false;
+        audio.volume = 1;
+        setAudioStatus(`Remote ${event.track.kind} connected`);
+        void audio.play()
+          .then(() => setAudioStatus("Realtime audio connected"))
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : "Audio playback was blocked.";
+            setVoiceError(`Nexus received the voice stream but could not play it: ${message}`);
+            setAudioStatus("Audio playback blocked");
+          });
       };
 
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "connected") setVoiceState("listening");
-        if (["failed", "disconnected", "closed"].includes(pc.connectionState) && pc.connectionState !== "closed") {
+        if (pc.connectionState === "connected") {
+          setVoiceState("listening");
+          setAudioStatus((current) => current === "Connecting realtime audio" ? "Realtime session connected" : current);
+        }
+        if (["failed", "disconnected"].includes(pc.connectionState)) {
           setVoiceState("error");
+          setVoiceError(`Realtime connection ${pc.connectionState}.`);
         }
       };
 
       const channel = pc.createDataChannel("oai-events");
       channelRef.current = channel;
       channel.onmessage = (event) => handleRealtimeEvent(event.data);
-      channel.onopen = () => {
-        setVoiceState("listening");
-        setAudioStatus("Voice input ready; browser speech output active");
-      };
+      channel.onopen = () => setVoiceState("listening");
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -258,9 +250,14 @@ export default function Home() {
     peerRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.srcObject = null;
+      audioRef.current.removeAttribute("src");
+      audioRef.current.load();
+    }
     assistantDraftRef.current = "";
-    setAudioStatus("Browser voice output ready");
+    setAudioStatus("Realtime audio ready");
     setVoiceState("ready");
   }
 
@@ -269,6 +266,8 @@ export default function Home() {
 
   return (
     <main className="nexus-shell">
+      <audio ref={audioRef} autoPlay playsInline aria-hidden="true" style={{ display: "none" }} />
+
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark"><Sparkles size={17} /></span>
@@ -334,16 +333,6 @@ export default function Home() {
             </div>
             {voiceActive && <AudioLines className="wave-icon" size={24} />}
           </div>
-
-          {!voiceActive && (
-            <button
-              type="button"
-              onClick={testSpeaker}
-              style={{ margin: "0 16px 12px", padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,.12)", background: "transparent", color: "inherit", cursor: "pointer" }}
-            >
-              Test browser voice
-            </button>
-          )}
 
           {voiceError && <div className="voice-error">{voiceError}</div>}
 
