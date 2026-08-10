@@ -37,6 +37,40 @@ function makeEntry(role: TranscriptEntry["role"], text: string, mode: Transcript
   return { id: crypto.randomUUID(), role, text, createdAt: now(), mode };
 }
 
+function makeTestToneBlob() {
+  const sampleRate = 44100;
+  const durationSeconds = 0.7;
+  const sampleCount = Math.floor(sampleRate * durationSeconds);
+  const buffer = new ArrayBuffer(44 + sampleCount * 2);
+  const view = new DataView(buffer);
+
+  const writeAscii = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + sampleCount * 2, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, "data");
+  view.setUint32(40, sampleCount * 2, true);
+
+  for (let i = 0; i < sampleCount; i += 1) {
+    const envelope = Math.min(1, i / 500, (sampleCount - i) / 1000);
+    const sample = Math.sin((2 * Math.PI * 523.25 * i) / sampleRate) * 0.28 * envelope;
+    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 0x7fff, true);
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
 export default function Home() {
   const [workspace, setWorkspace] = useState<OliverWorkspace>(initialWorkspace);
   const [selectedSection, setSelectedSection] = useState<SectionKey>("identity");
@@ -52,8 +86,6 @@ export default function Home() {
   const channelRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const remoteSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const assistantDraftRef = useRef("");
 
   useEffect(() => {
@@ -145,6 +177,8 @@ export default function Home() {
       if (type === "response.created") setVoiceState("thinking");
       if (type.includes("response.output_audio.delta") || type.includes("response.audio.delta")) setVoiceState("speaking");
       if (type === "response.done") setVoiceState("listening");
+      if (type.includes("output_audio_buffer.started")) setAudioStatus("OpenAI started audio output");
+      if (type.includes("output_audio_buffer.stopped")) setAudioStatus("OpenAI finished audio output");
 
       if (type === "conversation.item.input_audio_transcription.completed" && event.transcript?.trim()) {
         setTranscript((current) => [...current, makeEntry("user", event.transcript.trim(), "voice")]);
@@ -164,19 +198,49 @@ export default function Home() {
     }
   }
 
+  async function testSpeaker() {
+    const audio = audioRef.current;
+    if (!audio || peerRef.current) return;
+
+    setVoiceError("");
+    const url = URL.createObjectURL(makeTestToneBlob());
+    try {
+      audio.pause();
+      audio.srcObject = null;
+      audio.src = url;
+      audio.volume = 1;
+      audio.muted = false;
+      setAudioStatus("Playing speaker test");
+      await audio.play();
+      setAudioStatus("Speaker test played");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Speaker test failed.";
+      setAudioStatus("Speaker test failed");
+      setVoiceError(message);
+    } finally {
+      window.setTimeout(() => {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+        URL.revokeObjectURL(url);
+      }, 900);
+    }
+  }
+
   async function startVoice() {
     if (peerRef.current) return;
     setVoiceError("");
-    setAudioStatus("Unlocking speaker output");
+    setAudioStatus("Waiting for remote audio");
     setVoiceState("connecting");
 
     try {
-      // Resume an AudioContext directly from the user's click so Chrome treats
-      // realtime speech as user-authorized playback.
-      const audioContext = new AudioContext();
-      await audioContext.resume();
-      audioContextRef.current = audioContext;
-      setAudioStatus(`Speaker ready (${audioContext.state})`);
+      const audio = audioRef.current;
+      if (!audio) throw new Error("Nexus speaker element is unavailable.");
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.srcObject = null;
+      audio.muted = false;
+      audio.volume = 1;
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -185,37 +249,16 @@ export default function Home() {
       peerRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      const audio = document.createElement("audio");
-      audio.autoplay = true;
-      audio.muted = false;
-      audio.volume = 1;
-      audio.style.display = "none";
-      document.body.appendChild(audio);
-      audioRef.current = audio;
-
       pc.ontrack = (event) => {
         const remoteStream = event.streams[0] ?? new MediaStream([event.track]);
-        setAudioStatus(`Remote ${event.track.kind} track received`);
-
-        // Primary path: Web Audio, explicitly routed to the page's output.
-        try {
-          remoteSourceRef.current?.disconnect();
-          const source = audioContext.createMediaStreamSource(remoteStream);
-          source.connect(audioContext.destination);
-          remoteSourceRef.current = source;
-          setAudioStatus(`Nexus audio routed (${audioContext.state})`);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Web Audio routing failed.";
-          setVoiceError(`Remote audio arrived, but Web Audio routing failed: ${message}`);
-        }
-
-        // Fallback path: ordinary HTML media playback.
         audio.srcObject = remoteStream;
+        setAudioStatus(`Remote ${event.track.kind} track received`);
         void audio.play()
           .then(() => setAudioStatus("Nexus audio playing"))
           .catch((error) => {
             const message = error instanceof Error ? error.message : "Browser blocked audio playback.";
-            setVoiceError(`Remote audio arrived, but Chrome media playback failed: ${message}`);
+            setAudioStatus("Audio playback blocked");
+            setVoiceError(`Remote audio arrived, but Chrome could not play it: ${message}`);
           });
       };
 
@@ -260,18 +303,12 @@ export default function Home() {
     peerRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    remoteSourceRef.current?.disconnect();
-    remoteSourceRef.current = null;
-    if (audioContextRef.current) {
-      void audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.srcObject = null;
-      audioRef.current.remove();
+      audioRef.current.removeAttribute("src");
+      audioRef.current.load();
     }
-    audioRef.current = null;
     assistantDraftRef.current = "";
     setAudioStatus("Audio output waiting");
     setVoiceState("ready");
@@ -282,6 +319,7 @@ export default function Home() {
 
   return (
     <main className="nexus-shell">
+      <audio ref={audioRef} autoPlay style={{ display: "none" }} />
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark"><Sparkles size={17} /></span>
@@ -339,10 +377,21 @@ export default function Home() {
             </button>
             <div>
               <strong>{voiceActive ? "Voice session live" : "Talk to Nexus"}</strong>
-              <span>{voiceActive ? `Speak naturally. ${audioStatus}.` : "Start a realtime conversation in this workspace."}</span>
+              <span>{voiceActive ? `Speak naturally. ${audioStatus}.` : audioStatus}</span>
             </div>
             {voiceActive && <AudioLines className="wave-icon" size={24} />}
           </div>
+
+          {!voiceActive && (
+            <button
+              type="button"
+              onClick={() => void testSpeaker()}
+              style={{ margin: "0 16px 12px", padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,.12)", background: "transparent", color: "inherit", cursor: "pointer" }}
+            >
+              Test speaker
+            </button>
+          )}
+
           {voiceError && <div className="voice-error">{voiceError}</div>}
 
           <div className="transcript" aria-live="polite">
