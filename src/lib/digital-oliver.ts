@@ -11,6 +11,65 @@ export const MAG7 = {
 export type OliverSymbol = keyof typeof MAG7;
 export type OliverTab = "guidedReview" | "dailyRanking" | "evidenceLibrary" | "statistics" | "export" | "rulebook";
 
+export type OliverMarketBar = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+  sMA20: number | null;
+  sMA200: number | null;
+  boxHigh: number | null;
+  boxLow: number | null;
+  bullElephant: boolean;
+  bearElephant: boolean;
+  premarket: boolean;
+};
+
+export type OliverEngineCandidate = {
+  has_data: boolean;
+  has_elephant?: boolean;
+  score?: number | null;
+  direction?: string;
+  event_time?: string | null;
+  state?: string;
+  location_ok?: boolean;
+  box_high?: number | null;
+  box_low?: number | null;
+  box_cleared?: boolean;
+  inside_box?: boolean;
+  space_r?: number | null;
+  next_obstacle?: number | null;
+  entry?: number | null;
+  event_low?: number | null;
+  event_high?: number | null;
+  prev_close?: number | null;
+  prev_high?: number | null;
+  prev_low?: number | null;
+  prev_late_high?: number | null;
+  prev_late_low?: number | null;
+  premarket_high?: number | null;
+  premarket_low?: number | null;
+  reason?: string;
+};
+
+export type OliverMarketSnapshot = {
+  source: string;
+  symbol: OliverSymbol;
+  company: string;
+  interval: "1m" | "5m" | "15m";
+  sessionDate: string;
+  caseRef: string;
+  availableSessions: string[];
+  candidate: OliverEngineCandidate;
+  outcome: Record<string, number | boolean | null>;
+  bars: OliverMarketBar[];
+  parameters: Record<string, number>;
+  cache: string;
+  loadedAt: string;
+};
+
 export type CaseReview = {
   caseId: string;
   caseRef: string;
@@ -93,6 +152,7 @@ export type DigitalOliverWorkspaceState = {
   cases: CaseReview[];
   days: DayReview[];
   week: WeekReview;
+  marketSnapshot: OliverMarketSnapshot | null;
   updatedAt: string;
 };
 
@@ -205,6 +265,7 @@ export const initialDigitalOliverState: DigitalOliverWorkspaceState = {
     weeklyLesson: "",
     locked: false,
   },
+  marketSnapshot: null,
   updatedAt: new Date(0).toISOString(),
 };
 
