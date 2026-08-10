@@ -52,6 +52,8 @@ export default function Home() {
   const channelRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const remoteSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const assistantDraftRef = useRef("");
 
   useEffect(() => {
@@ -165,10 +167,17 @@ export default function Home() {
   async function startVoice() {
     if (peerRef.current) return;
     setVoiceError("");
-    setAudioStatus("Waiting for Nexus audio");
+    setAudioStatus("Unlocking speaker output");
     setVoiceState("connecting");
 
     try {
+      // Resume an AudioContext directly from the user's click so Chrome treats
+      // realtime speech as user-authorized playback.
+      const audioContext = new AudioContext();
+      await audioContext.resume();
+      audioContextRef.current = audioContext;
+      setAudioStatus(`Speaker ready (${audioContext.state})`);
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
@@ -186,14 +195,27 @@ export default function Home() {
 
       pc.ontrack = (event) => {
         const remoteStream = event.streams[0] ?? new MediaStream([event.track]);
+        setAudioStatus(`Remote ${event.track.kind} track received`);
+
+        // Primary path: Web Audio, explicitly routed to the page's output.
+        try {
+          remoteSourceRef.current?.disconnect();
+          const source = audioContext.createMediaStreamSource(remoteStream);
+          source.connect(audioContext.destination);
+          remoteSourceRef.current = source;
+          setAudioStatus(`Nexus audio routed (${audioContext.state})`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Web Audio routing failed.";
+          setVoiceError(`Remote audio arrived, but Web Audio routing failed: ${message}`);
+        }
+
+        // Fallback path: ordinary HTML media playback.
         audio.srcObject = remoteStream;
-        setAudioStatus("Remote audio track received");
         void audio.play()
           .then(() => setAudioStatus("Nexus audio playing"))
           .catch((error) => {
             const message = error instanceof Error ? error.message : "Browser blocked audio playback.";
-            setAudioStatus("Audio playback blocked");
-            setVoiceError(`Nexus generated audio, but Chrome could not play it: ${message}`);
+            setVoiceError(`Remote audio arrived, but Chrome media playback failed: ${message}`);
           });
       };
 
@@ -238,6 +260,12 @@ export default function Home() {
     peerRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    remoteSourceRef.current?.disconnect();
+    remoteSourceRef.current = null;
+    if (audioContextRef.current) {
+      void audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.srcObject = null;
