@@ -79,10 +79,10 @@ export async function POST(request: Request) {
             turn_detection: {
               type: "server_vad",
               create_response: true,
-              interrupt_response: true,
-              threshold: 0.4,
+              interrupt_response: false,
+              threshold: 0.5,
               prefix_padding_ms: 300,
-              silence_duration_ms: 600,
+              silence_duration_ms: 700,
             },
           },
           output: { voice: process.env.OPENAI_VOICE || "marin" },
