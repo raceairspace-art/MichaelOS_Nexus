@@ -11,17 +11,16 @@ import pandas as pd
 try:
     from .config import MAG7
     from .market_data import ensure_symbol, session_dates
-    from .oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case, visible_slice
+    from .oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case
 except ImportError:
     from config import MAG7
     from market_data import ensure_symbol, session_dates
-    from oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case, visible_slice
+    from oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case
 
 
 def _period(interval: str) -> str:
     # Yahoo intraday history is constrained. 1m is only available for the
-    # most recent week, while 5m/15m are reliably available over a rolling
-    # ~60-day window. Requesting 3mo can make yfinance reject the call.
+    # most recent week, while 5m/15m are available over a rolling ~60 days.
     return "7d" if interval == "1m" else "60d"
 
 
@@ -88,6 +87,23 @@ def _params(query) -> OliverParams:
     )
 
 
+def _decision_frame(features: pd.DataFrame, session_date, params: OliverParams, candidate: dict) -> tuple[pd.DataFrame, object | None]:
+    day = day_slice(features, session_date)
+    visible = day[(day.LocalMinute >= params.premarket_start_hour * 60) & (day.LocalMinute < 960)]
+    event_time = candidate.get("event_time")
+    if event_time is None:
+        # If the engine cannot identify a candidate, reveal only through the configured
+        # opening window. This preserves the no-hindsight boundary while still making
+        # the case reviewable.
+        regular = visible[visible.LocalMinute >= 570]
+        if regular.empty:
+            return visible, None
+        cutoff = regular.index[min(len(regular) - 1, max(0, int(params.opening_window_minutes / 5) - 1))]
+        return visible.loc[visible.index <= cutoff], cutoff
+    cutoff = pd.Timestamp(event_time)
+    return visible.loc[visible.index <= cutoff], cutoff
+
+
 class handler(BaseHTTPRequestHandler):
     def _send(self, status: int, payload: dict):
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -104,13 +120,15 @@ class handler(BaseHTTPRequestHandler):
             symbol = query.get("symbol", ["AAPL"])[0].upper()
             interval = query.get("interval", ["5m"])[0]
             requested_date = query.get("date", [""])[0]
-            full_day = query.get("fullDay", ["0"])[0] == "1"
             refresh = query.get("refresh", ["0"])[0] == "1"
+            phase = query.get("phase", ["decision"])[0]
 
             if symbol not in MAG7:
                 self._send(400, {"error": "Unsupported symbol."}); return
             if interval not in {"1m", "5m", "15m"}:
                 self._send(400, {"error": "Unsupported timeframe."}); return
+            if phase not in {"decision", "outcome"}:
+                self._send(400, {"error": "Unsupported replay phase."}); return
 
             raw = ensure_symbol(symbol, interval, _period(interval), refresh=refresh)
             available = session_dates(raw)
@@ -131,8 +149,15 @@ class handler(BaseHTTPRequestHandler):
             params = _params(query)
             features = add_features(raw, params)
             candidate = best_case(features, session_date, params)
-            outcome = outcome_for_case(features, session_date, candidate)
-            chart_frame = day_slice(features, session_date) if full_day else visible_slice(features, session_date, params)
+            decision_frame, decision_time = _decision_frame(features, session_date, params, candidate)
+
+            if phase == "decision":
+                chart_frame = decision_frame
+                outcome = None
+            else:
+                day = day_slice(features, session_date)
+                chart_frame = day[(day.LocalMinute >= params.premarket_start_hour * 60) & (day.LocalMinute < 960)]
+                outcome = outcome_for_case(features, session_date, candidate)
 
             self._send(200, {
                 "source": "Digital Oliver Python engine",
@@ -142,8 +167,10 @@ class handler(BaseHTTPRequestHandler):
                 "sessionDate": session_date.isoformat(),
                 "caseRef": _case_ref(session_date, symbol),
                 "availableSessions": [d.isoformat() for d in available[-60:]],
+                "phase": phase,
+                "decisionTime": _clean(decision_time),
                 "candidate": {key: _clean(value) for key, value in candidate.items()},
-                "outcome": {key: _clean(value) for key, value in outcome.items()},
+                "outcome": None if outcome is None else {key: _clean(value) for key, value in outcome.items()},
                 "bars": _bars(chart_frame),
                 "parameters": {
                     "fastSma": params.fast_sma, "slowSma": params.slow_sma, "atrLen": params.atr_len,
