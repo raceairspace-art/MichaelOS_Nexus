@@ -45,7 +45,11 @@ function safeOpenAIError(status: number, body: string) {
     if (body.trim() && body.length < 500) detail = body.trim();
   }
 
-  return { error: "Nexus could not start a realtime voice session.", openAIStatus: status, detail };
+  return {
+    error: `OpenAI realtime error ${status}: ${detail}`,
+    openAIStatus: status,
+    detail,
+  };
 }
 
 export async function POST(request: Request) {
