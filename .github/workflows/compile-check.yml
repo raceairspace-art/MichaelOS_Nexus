@@ -44,3 +44,7 @@ jobs:
           assert frame.index.name == "Datetime"
           print("PASS durable load returns timezone-aware DatetimeIndex")
           PY
+      - name: Run corrected staging persistence/security E2E
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: python scripts/oliver_e2e.py "https://michaelos-nexus-mvwmwry4g-raceair.vercel.app"
