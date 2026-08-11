@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const nullableNumber = z.number().finite().nullable().optional().default(null);
 const optionalBoolean = z.boolean().optional().default(false);
@@ -142,12 +142,15 @@ export async function POST(request: Request) {
 
     const input = parsed.data;
     const recentBars = input.bars.slice(-80);
+    const model = process.env.OPENAI_OLIVER_MODEL || "gpt-5-mini";
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: process.env.OPENAI_TEXT_MODEL || "gpt-5",
+        model,
         store: false,
+        reasoning: { effort: "minimal" },
+        max_output_tokens: 2000,
         instructions: [
           "You are Nexus acting as the independent AI reviewer inside Digital Oliver.",
           "Evaluate only the supplied decision-time evidence. Future candles and outcome statistics are intentionally unavailable.",
@@ -155,6 +158,7 @@ export async function POST(request: Request) {
           "The Python engine facts are evidence, not a command. Make your own preliminary judgment, but do not invent levels or candles.",
           "Oliver's practical trading behavior is opening-window centric; weigh setups that are actionable near the market open more heavily than hypothetical later opportunities.",
           "Score qualities from 1 (poor) to 5 (excellent). Be willing to say No/Reject when the setup is weak.",
+          "Keep each rationale concise: one short sentence per category.",
           "Your assessment is frozen once returned; explanations should make it easy for Michael to ask why you scored a criterion the way you did.",
         ].join("\n"),
         input: JSON.stringify({
@@ -181,13 +185,13 @@ export async function POST(request: Request) {
     if (!response.ok) {
       const detail = await response.text();
       console.error("Oliver AI review failed", response.status, detail);
-      return Response.json({ error: `Nexus automatic Oliver review failed (${response.status}).` }, { status: 502 });
+      return Response.json({ error: `Nexus automatic Oliver review failed (${response.status}): ${detail.slice(0, 500)}` }, { status: 502 });
     }
 
     const data = await response.json();
     const text = outputText(data);
     let json: unknown;
-    try { json = JSON.parse(text); } catch { return Response.json({ error: "Nexus returned an unreadable Oliver review." }, { status: 502 }); }
+    try { json = JSON.parse(text); } catch { return Response.json({ error: `Nexus returned an unreadable Oliver review: ${text.slice(0, 500)}` }, { status: 502 }); }
     const review = reviewSchema.safeParse(json);
     if (!review.success) {
       console.error("Oliver AI review schema mismatch", review.error.flatten());
@@ -198,7 +202,7 @@ export async function POST(request: Request) {
       review: {
         ...review.data,
         generatedAt: new Date().toISOString(),
-        model: data.model || process.env.OPENAI_TEXT_MODEL || "gpt-5",
+        model: data.model || model,
         modelVersion: input.modelVersion,
         timeframe: input.timeframe,
         decisionTime: input.decisionTime,
@@ -206,6 +210,6 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("Oliver AI review route failed", error);
-    return Response.json({ error: "Nexus could not complete the automatic Oliver review." }, { status: 500 });
+    return Response.json({ error: error instanceof Error ? `Nexus Oliver review failed: ${error.message}` : "Nexus could not complete the automatic Oliver review." }, { status: 500 });
   }
 }
