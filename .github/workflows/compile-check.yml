@@ -21,3 +21,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: Run staging persistence/security E2E
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: python scripts/oliver_e2e.py "https://michaelos-nexus-44vgcziej-raceair.vercel.app"
