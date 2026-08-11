@@ -16,17 +16,13 @@ function cookieFromHeader(request: Request, name: string) {
   return "";
 }
 
-export function accessTokenFromRequest(request: Request) {
-  return cookieFromHeader(request, ACCESS_COOKIE);
-}
-
-export function refreshTokenFromRequest(request: Request) {
-  return cookieFromHeader(request, REFRESH_COOKIE);
-}
+export function accessTokenFromRequest(request: Request) { return cookieFromHeader(request, ACCESS_COOKIE); }
+export function refreshTokenFromRequest(request: Request) { return cookieFromHeader(request, REFRESH_COOKIE); }
 
 export function automationBypassAuthorized(request: Request) {
   const expected = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
-  return Boolean(expected) && request.headers.get("x-vercel-protection-bypass") === expected;
+  if (!expected) return false;
+  return request.headers.get("x-michaelos-automation-bypass") === expected || request.headers.get("x-vercel-protection-bypass") === expected;
 }
 
 export async function verifyAccessToken(token: string): Promise<SupabaseUser | null> {
@@ -34,52 +30,39 @@ export async function verifyAccessToken(token: string): Promise<SupabaseUser | n
   try {
     const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       method: "GET",
-      headers: {
-        apikey: SUPABASE_PUBLISHABLE_KEY,
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
     if (!response.ok) return null;
     const user = await response.json() as SupabaseUser;
     if (user.id !== NEXUS_ALLOWED_USER_ID) return null;
     return user;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export async function authenticateRequest(request: Request) {
   if (automationBypassAuthorized(request)) return { ok: true as const, bypass: true as const, user: null };
-  const token = accessTokenFromRequest(request);
-  const user = await verifyAccessToken(token);
+  const user = await verifyAccessToken(accessTokenFromRequest(request));
   if (!user) return { ok: false as const, bypass: false as const, user: null };
   return { ok: true as const, bypass: false as const, user };
 }
 
-export function unauthorized() {
-  return Response.json({ error: "Authentication required." }, { status: 401 });
-}
-
+export function unauthorized() { return Response.json({ error: "Authentication required." }, { status: 401 }); }
 function serializeCookie(name: string, value: string, maxAge: number) {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.max(0, Math.floor(maxAge))}${secure}`;
 }
-
 export function setSessionCookies(response: Response, session: SessionPayload) {
   if (!session.access_token || !session.refresh_token) return response;
-  const accessMaxAge = Math.max(60, Number(session.expires_in || 3600) - 30);
-  response.headers.append("Set-Cookie", serializeCookie(ACCESS_COOKIE, session.access_token, accessMaxAge));
+  response.headers.append("Set-Cookie", serializeCookie(ACCESS_COOKIE, session.access_token, Math.max(60, Number(session.expires_in || 3600) - 30)));
   response.headers.append("Set-Cookie", serializeCookie(REFRESH_COOKIE, session.refresh_token, 60 * 60 * 24 * 30));
   return response;
 }
-
 export function clearSessionCookies(response: Response) {
   response.headers.append("Set-Cookie", serializeCookie(ACCESS_COOKIE, "", 0));
   response.headers.append("Set-Cookie", serializeCookie(REFRESH_COOKIE, "", 0));
   return response;
 }
-
 export async function supabaseAuth(path: string, init: RequestInit = {}, accessToken?: string) {
   const headers = new Headers(init.headers || {});
   headers.set("apikey", SUPABASE_PUBLISHABLE_KEY);

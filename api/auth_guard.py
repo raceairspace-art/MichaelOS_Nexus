@@ -15,8 +15,9 @@ _VERIFY_CACHE: dict[str, float] = {}
 
 def _bypass(handler) -> bool:
     expected = os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET", "")
-    supplied = handler.headers.get("x-vercel-protection-bypass", "")
-    return bool(expected) and supplied == expected
+    if not expected:
+        return False
+    return handler.headers.get("x-michaelos-automation-bypass", "") == expected or handler.headers.get("x-vercel-protection-bypass", "") == expected
 
 
 def _access_token(handler) -> str:
@@ -24,8 +25,7 @@ def _access_token(handler) -> str:
     if not raw:
         return ""
     try:
-        cookies = SimpleCookie()
-        cookies.load(raw)
+        cookies = SimpleCookie(); cookies.load(raw)
         morsel = cookies.get(ACCESS_COOKIE)
         return morsel.value if morsel else ""
     except Exception:
@@ -35,19 +35,10 @@ def _access_token(handler) -> str:
 def _verify_token(token: str) -> bool:
     if not token:
         return False
-    now = time.time()
-    expires = _VERIFY_CACHE.get(token, 0)
+    now = time.time(); expires = _VERIFY_CACHE.get(token, 0)
     if expires > now:
         return True
-    req = Request(
-        f"{SUPABASE_URL}/auth/v1/user",
-        headers={
-            "apikey": SUPABASE_PUBLISHABLE_KEY,
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "User-Agent": "MichaelOS-Nexus-Python-Auth/1.0",
-        },
-    )
+    req = Request(f"{SUPABASE_URL}/auth/v1/user", headers={"apikey":SUPABASE_PUBLISHABLE_KEY,"Authorization":f"Bearer {token}","Accept":"application/json","User-Agent":"MichaelOS-Nexus-Python-Auth/1.0"})
     try:
         with urlopen(req, timeout=6) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -55,9 +46,8 @@ def _verify_token(token: str) -> bool:
             return False
         _VERIFY_CACHE[token] = now + 300
         if len(_VERIFY_CACHE) > 128:
-            stale = [key for key, value in _VERIFY_CACHE.items() if value <= now]
-            for key in stale:
-                _VERIFY_CACHE.pop(key, None)
+            for key, value in list(_VERIFY_CACHE.items()):
+                if value <= now: _VERIFY_CACHE.pop(key, None)
         return True
     except Exception:
         return False
@@ -73,5 +63,4 @@ def send_unauthorized(handler):
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Cache-Control", "no-store")
     handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+    handler.end_headers(); handler.wfile.write(body)
