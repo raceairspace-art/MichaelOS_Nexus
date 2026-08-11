@@ -37,7 +37,7 @@ export function preparePasskeyCreation(options: Record<string, any>): PublicKeyC
           id: base64urlToBytes(item.id),
         }))
       : undefined,
-  } as PublicKeyCredentialCreationOptions;
+  } as unknown as PublicKeyCredentialCreationOptions;
 }
 
 export function serializePublicKeyCredential(credential: PublicKeyCredential) {
