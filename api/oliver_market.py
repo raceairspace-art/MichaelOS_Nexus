@@ -9,12 +9,14 @@ from urllib.parse import parse_qs, urlparse
 import pandas as pd
 
 try:
+    from .auth_guard import authorized, send_unauthorized
     from .config import MAG7
     from .market_data import ensure_symbol, merge_cache, session_dates
     from .oliver_decision import decision_review
     from .oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case
     from .oliver_store import configured as store_configured, latest_fetch_day, load_bars as load_durable_bars, save_bars as save_durable_bars
 except ImportError:
+    from auth_guard import authorized, send_unauthorized
     from config import MAG7
     from market_data import ensure_symbol, merge_cache, session_dates
     from oliver_decision import decision_review
@@ -163,6 +165,9 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not authorized(self):
+            send_unauthorized(self)
+            return
         try:
             query = parse_qs(urlparse(self.path).query)
             symbol = query.get("symbol", ["AAPL"])[0].upper()

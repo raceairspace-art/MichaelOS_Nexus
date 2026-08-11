@@ -5,12 +5,14 @@ from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
 try:
+    from .auth_guard import authorized, send_unauthorized
     from .config import MAG7
     from .oliver_decision import decision_review
     from .oliver_engine import add_features, best_case
     from .oliver_market import _load_market, _params
     from .oliver_store import save_engine_ranking, save_engine_review
 except ImportError:
+    from auth_guard import authorized, send_unauthorized
     from config import MAG7
     from oliver_decision import decision_review
     from oliver_engine import add_features, best_case
@@ -34,9 +36,7 @@ def _rank(reviews: list[dict]) -> dict:
     actionable = [item for item in eligible if item["review"].get("wouldTrade") in ("Yes", "Maybe") and float(item["review"].get("score") or 0) >= 55]
     if not actionable:
         return {
-            "bestSymbol": "NO_TRADE",
-            "secondSymbol": "NO_TRADE",
-            "noTradeDay": True,
+            "bestSymbol": "NO_TRADE", "secondSymbol": "NO_TRADE", "noTradeDay": True,
             "winnerReason": "No symbol cleared the deterministic Oliver tradeability threshold.",
             "separationReason": "All seven cases were rejected or remained below the minimum actionable score.",
             "confidence": 5,
@@ -46,9 +46,7 @@ def _rank(reviews: list[dict]) -> dict:
     gap = float(best["review"].get("score") or 0) - (float(second["review"].get("score") or 0) if second else 0)
     confidence = 5 if gap >= 15 else 4 if gap >= 8 else 3
     return {
-        "bestSymbol": best["symbol"],
-        "secondSymbol": second["symbol"] if second else "NO_TRADE",
-        "noTradeDay": False,
+        "bestSymbol": best["symbol"], "secondSymbol": second["symbol"] if second else "NO_TRADE", "noTradeDay": False,
         "winnerReason": f"{best['symbol']} has the strongest encoded Oliver profile at {best['review'].get('score', 0):.1f}/100: {best['review'].get('strongestReason', '')}",
         "separationReason": f"Score separation to the runner-up is {gap:.1f} points." if second else "No second symbol met the actionable threshold.",
         "confidence": confidence,
@@ -66,6 +64,9 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not authorized(self):
+            send_unauthorized(self)
+            return
         try:
             query = parse_qs(urlparse(self.path).query)
             interval = query.get("interval", ["5m"])[0]
@@ -83,11 +84,7 @@ class handler(BaseHTTPRequestHandler):
                 raw, _ = _load_market(symbol, interval, requested_date, False)
                 features = add_features(raw, params)
                 available_dates = sorted(set(features.LocalDate))
-                requested_obj = None
-                for d in available_dates:
-                    if d.isoformat() == requested_date:
-                        requested_obj = d
-                        break
+                requested_obj = next((d for d in available_dates if d.isoformat() == requested_date), None)
                 if requested_obj is None:
                     self._send(409, {"error": f"{symbol} has no stored/available market session for {requested_date}."}); return
                 actual_date = requested_obj.isoformat()
@@ -100,12 +97,8 @@ class handler(BaseHTTPRequestHandler):
             ranking = _rank(reviews)
             save_engine_ranking(actual_date or requested_date, interval, model_version, reviews, ranking)
             self._send(200, {
-                "sessionDate": actual_date or requested_date,
-                "timeframe": interval,
-                "modelVersion": model_version,
-                "reviews": reviews,
-                "ranking": ranking,
-                "source": "Deterministic Oliver Decision Engine",
+                "sessionDate": actual_date or requested_date, "timeframe": interval, "modelVersion": model_version,
+                "reviews": reviews, "ranking": ranking, "source": "Deterministic Oliver Decision Engine",
             })
         except Exception as exc:
             self._send(500, {"error": f"Oliver Decision Engine day review failed: {exc}"})

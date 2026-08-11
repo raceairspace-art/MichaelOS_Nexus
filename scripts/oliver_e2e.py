@@ -14,11 +14,11 @@ TIMEFRAME = "5m"
 MODEL_VERSION = "Oliver E2E smoke"
 
 
-def request_json(url: str, *, method: str = "GET", payload: dict | None = None, timeout: int = 90) -> dict:
+def request_json(url: str, *, method: str = "GET", payload: dict | None = None, timeout: int = 90, use_bypass: bool = True) -> dict:
     data = None
-    headers = {"Accept": "application/json", "User-Agent": "MichaelOS-Oliver-E2E/2.0"}
+    headers = {"Accept": "application/json", "User-Agent": "MichaelOS-Oliver-E2E/3.0"}
     bypass = os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET", "")
-    if bypass:
+    if bypass and use_bypass:
         headers["x-vercel-protection-bypass"] = bypass
     if payload is not None:
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -61,17 +61,7 @@ def validate_market(symbol: str, market: dict, expected_date: str | None = None)
 
 
 def review_payload(symbol: str, market: dict, manual: bool) -> dict:
-    return {
-        "symbol": symbol,
-        "sessionDate": market.get("sessionDate"),
-        "timeframe": TIMEFRAME,
-        "decisionTime": market.get("decisionTime"),
-        "modelVersion": MODEL_VERSION,
-        "parameters": market.get("parameters") or {},
-        "candidate": market.get("candidate") or {},
-        "bars": (market.get("bars") or [])[-500:],
-        "manual": manual,
-    }
+    return {"symbol":symbol,"sessionDate":market.get("sessionDate"),"timeframe":TIMEFRAME,"decisionTime":market.get("decisionTime"),"modelVersion":MODEL_VERSION,"parameters":market.get("parameters") or {},"candidate":market.get("candidate") or {},"bars":(market.get("bars") or [])[-500:],"manual":manual}
 
 
 def validate_review(symbol: str, response: dict) -> dict:
@@ -86,74 +76,57 @@ def validate_review(symbol: str, response: dict) -> dict:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: oliver_e2e.py <deployment-base-url>", file=sys.stderr)
-        return 2
+        print("usage: oliver_e2e.py <deployment-base-url>", file=sys.stderr); return 2
     base_url = sys.argv[1].rstrip("/")
-    print(f"Digital Oliver persistence/cost E2E against {base_url}")
+    print(f"Digital Oliver persistence/security/cost E2E against {base_url}")
     print(f"Vercel automation bypass secret {'is present (value hidden)' if os.environ.get('VERCEL_AUTOMATION_BYPASS_SECRET') else 'is NOT present'}.")
 
-    print("[1/6] Resolve a trading session and verify deterministic engine")
-    aapl = request_json(market_url(base_url, "AAPL"))
-    validate_market("AAPL", aapl)
+    print("[1/7] Confirm CI bypass is recognized by the Nexus auth layer")
+    auth = request_json(f"{base_url}/api/auth/me")
+    if auth.get("bypass") is not True:
+        raise RuntimeError(f"Nexus auth layer did not recognize automation bypass: {auth}")
+    print("      PASS authenticated automation bypass")
+
+    print("[2/7] Resolve a trading session and verify deterministic engine")
+    aapl = request_json(market_url(base_url, "AAPL")); validate_market("AAPL", aapl)
     session_date = aapl.get("sessionDate")
-    if not session_date:
-        raise RuntimeError("AAPL did not provide sessionDate")
-    if not aapl.get("durableStoreConfigured"):
-        raise RuntimeError("Durable Oliver store is not configured in this Preview deployment")
+    if not session_date: raise RuntimeError("AAPL did not provide sessionDate")
+    if not aapl.get("durableStoreConfigured"): raise RuntimeError("Durable Oliver store is not configured in this Preview deployment")
     print(f"      session={session_date}, engine={aapl['engineReview'].get('overallGrade')} score={aapl['engineReview'].get('score')}")
 
-    print("[2/6] Market snapshots for all seven on the same session")
+    print("[3/7] Market snapshots for all seven on the same session")
     markets = {"AAPL": aapl}
     for symbol in SYMBOLS[1:]:
-        market = request_json(market_url(base_url, symbol, session_date))
-        validate_market(symbol, market, session_date)
-        markets[symbol] = market
+        market=request_json(market_url(base_url,symbol,session_date));validate_market(symbol,market,session_date);markets[symbol]=market
         print(f"      PASS {symbol}: bars={len(market['bars'])}, engine={market['engineReview'].get('overallGrade')}")
 
-    print("[3/6] Deterministic all-seven daily ranking")
-    q = urllib.parse.urlencode({"date": session_date, "interval": TIMEFRAME, "modelVersion": MODEL_VERSION})
-    engine_day = request_json(f"{base_url}/api/oliver_engine_day?{q}")
-    if len(engine_day.get("reviews") or []) != 7 or not isinstance(engine_day.get("ranking"), dict):
-        raise RuntimeError(f"Engine day response incomplete: {engine_day}")
+    print("[4/7] Deterministic all-seven daily ranking")
+    q=urllib.parse.urlencode({"date":session_date,"interval":TIMEFRAME,"modelVersion":MODEL_VERSION});engine_day=request_json(f"{base_url}/api/oliver_engine_day?{q}")
+    if len(engine_day.get("reviews") or [])!=7 or not isinstance(engine_day.get("ranking"),dict):raise RuntimeError(f"Engine day response incomplete: {engine_day}")
     print(f"      PASS engine rank: #1={engine_day['ranking'].get('bestSymbol')} #2={engine_day['ranking'].get('secondSymbol')}")
 
-    print("[4/6] Manually create or reuse seven Nexus reviews")
-    reviews = []
-    review_url = f"{base_url}/api/oliver-ai-review"
+    print("[5/7] Manually create or reuse seven Nexus reviews")
+    reviews=[];review_url=f"{base_url}/api/oliver-ai-review"
     for symbol in SYMBOLS:
-        started = time.time()
-        response = request_json(review_url, method="POST", payload=review_payload(symbol, markets[symbol], True))
-        review = validate_review(symbol, response)
-        reviews.append({"symbol": symbol, "review": review})
-        print(f"      PASS {symbol}: grade={review.get('overallGrade')} cached={response.get('cached')} ({time.time()-started:.1f}s)")
+        started=time.time();response=request_json(review_url,method="POST",payload=review_payload(symbol,markets[symbol],True));review=validate_review(symbol,response);reviews.append({"symbol":symbol,"review":review});print(f"      PASS {symbol}: grade={review.get('overallGrade')} cached={response.get('cached')} ({time.time()-started:.1f}s)")
 
-    print("[5/6] Prove duplicate review requests are cache hits without OpenAI")
+    print("[6/7] Prove duplicate review requests are cache hits without OpenAI")
     for symbol in SYMBOLS:
-        response = request_json(review_url, method="POST", payload=review_payload(symbol, markets[symbol], False))
-        validate_review(symbol, response)
-        if response.get("cached") is not True:
-            raise RuntimeError(f"{symbol}: duplicate review was not served from durable cache")
+        response=request_json(review_url,method="POST",payload=review_payload(symbol,markets[symbol],False));validate_review(symbol,response)
+        if response.get("cached") is not True:raise RuntimeError(f"{symbol}: duplicate review was not served from durable cache")
     print("      PASS all seven duplicate requests returned cached=true")
 
-    print("[6/6] Manual daily Nexus ranking, then prove ranking cache hit")
-    rank_url = f"{base_url}/api/oliver-ai-rank"
-    rank_payload = {"sessionDate": session_date, "timeframe": TIMEFRAME, "modelVersion": MODEL_VERSION, "reviews": reviews, "manual": True}
-    ranking_response = request_json(rank_url, method="POST", payload=rank_payload)
-    ranking = ranking_response.get("ranking")
-    if not isinstance(ranking, dict):
-        raise RuntimeError(f"Daily rank response missing ranking: {ranking_response}")
-    cached_rank_payload = {**rank_payload, "manual": False}
-    cached_ranking = request_json(rank_url, method="POST", payload=cached_rank_payload)
-    if cached_ranking.get("cached") is not True:
-        raise RuntimeError("Duplicate daily Nexus ranking was not served from durable cache")
+    print("[7/7] Manual daily Nexus ranking, then prove ranking cache hit")
+    rank_url=f"{base_url}/api/oliver-ai-rank";rank_payload={"sessionDate":session_date,"timeframe":TIMEFRAME,"modelVersion":MODEL_VERSION,"reviews":reviews,"manual":True};ranking_response=request_json(rank_url,method="POST",payload=rank_payload);ranking=ranking_response.get("ranking")
+    if not isinstance(ranking,dict):raise RuntimeError(f"Daily rank response missing ranking: {ranking_response}")
+    cached_ranking=request_json(rank_url,method="POST",payload={**rank_payload,"manual":False})
+    if cached_ranking.get("cached") is not True:raise RuntimeError("Duplicate daily Nexus ranking was not served from durable cache")
     print(f"      PASS Nexus rank: #1={ranking.get('bestSymbol')} #2={ranking.get('secondSymbol')} cached replay=true")
-    print("E2E PASS: durable market -> deterministic engine -> manual Nexus -> zero-cost duplicate cache")
+    print("E2E PASS: auth bypass -> durable market -> deterministic engine -> manual Nexus -> zero-cost duplicate cache")
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
+    try: raise SystemExit(main())
     except Exception as exc:
-        print(f"E2E FAIL: {exc}", file=sys.stderr)
-        raise
+        print(f"E2E FAIL: {exc}", file=sys.stderr); raise
