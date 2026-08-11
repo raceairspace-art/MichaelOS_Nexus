@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -11,11 +12,14 @@ import urllib.request
 SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"]
 TIMEFRAME = "5m"
 MODEL_VERSION = "Oliver E2E smoke"
+BYPASS_SECRET = os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET", "").strip()
 
 
 def request_json(url: str, *, method: str = "GET", payload: dict | None = None, timeout: int = 45) -> dict:
     data = None
     headers = {"Accept": "application/json", "User-Agent": "MichaelOS-Oliver-E2E/1.0"}
+    if BYPASS_SECRET:
+        headers["x-vercel-protection-bypass"] = BYPASS_SECRET
     if payload is not None:
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -83,8 +87,12 @@ def main() -> int:
     if len(sys.argv) != 2:
         print("usage: oliver_e2e.py <deployment-base-url>", file=sys.stderr)
         return 2
+    if not BYPASS_SECRET:
+        raise RuntimeError("VERCEL_AUTOMATION_BYPASS_SECRET is not available to the workflow")
+
     base_url = sys.argv[1].rstrip("/")
     print(f"Digital Oliver E2E against {base_url}")
+    print("Vercel automation bypass secret is present (value hidden).")
 
     print("[1/4] Resolve a real trading session from AAPL")
     aapl_market = request_json(market_url(base_url, "AAPL"), timeout=60)
@@ -107,7 +115,7 @@ def main() -> int:
     review_url = f"{base_url}/api/oliver-ai-review"
     for symbol in SYMBOLS:
         started = time.time()
-        response = request_json(review_url, method="POST", payload=review_payload(symbol, markets[symbol]), timeout=60)
+        response = request_json(review_url, method="POST", payload=review_payload(symbol, markets[symbol]), timeout=90)
         review = validate_review(symbol, response)
         reviews.append({"symbol": symbol, "review": review})
         print(
@@ -126,7 +134,7 @@ def main() -> int:
             "modelVersion": MODEL_VERSION,
             "reviews": reviews,
         },
-        timeout=60,
+        timeout=90,
     )
     ranking = ranking_response.get("ranking")
     if not isinstance(ranking, dict):
