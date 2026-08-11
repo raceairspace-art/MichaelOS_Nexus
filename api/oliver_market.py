@@ -10,17 +10,21 @@ import pandas as pd
 
 try:
     from .config import MAG7
-    from .market_data import ensure_symbol, session_dates
+    from .market_data import ensure_symbol, merge_cache, session_dates
+    from .oliver_decision import decision_review
     from .oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case
+    from .oliver_store import configured as store_configured, latest_fetch_day, load_bars as load_durable_bars, save_bars as save_durable_bars
 except ImportError:
     from config import MAG7
-    from market_data import ensure_symbol, session_dates
+    from market_data import ensure_symbol, merge_cache, session_dates
+    from oliver_decision import decision_review
     from oliver_engine import OliverParams, add_features, best_case, day_slice, outcome_for_case
+    from oliver_store import configured as store_configured, latest_fetch_day, load_bars as load_durable_bars, save_bars as save_durable_bars
+
+NY_TZ = "America/New_York"
 
 
 def _period(interval: str) -> str:
-    # Yahoo intraday history is constrained. 1m is only available for the
-    # most recent week, while 5m/15m are available over a rolling ~60 days.
     return "7d" if interval == "1m" else "60d"
 
 
@@ -92,16 +96,60 @@ def _decision_frame(features: pd.DataFrame, session_date, params: OliverParams, 
     visible = day[(day.LocalMinute >= params.premarket_start_hour * 60) & (day.LocalMinute < 960)]
     event_time = candidate.get("event_time")
     if event_time is None:
-        # If the engine cannot identify a candidate, reveal only through the configured
-        # opening window. This preserves the no-hindsight boundary while still making
-        # the case reviewable.
         regular = visible[visible.LocalMinute >= 570]
         if regular.empty:
             return visible, None
-        cutoff = regular.index[min(len(regular) - 1, max(0, int(params.opening_window_minutes / 5) - 1))]
+        step_minutes = 5
+        if len(regular.index) > 1:
+            delta = regular.index[1] - regular.index[0]
+            step_minutes = max(1, int(delta.total_seconds() // 60))
+        cutoff = regular.index[min(len(regular) - 1, max(0, int(params.opening_window_minutes / step_minutes) - 1))]
         return visible.loc[visible.index <= cutoff], cutoff
     cutoff = pd.Timestamp(event_time)
     return visible.loc[visible.index <= cutoff], cutoff
+
+
+def _load_market(symbol: str, interval: str, requested_date: str, refresh: bool) -> tuple[pd.DataFrame, str]:
+    durable = pd.DataFrame()
+    durable_sessions = []
+    if store_configured():
+        try:
+            durable = load_durable_bars(symbol, interval)
+            durable_sessions = session_dates(durable)
+        except Exception:
+            durable = pd.DataFrame()
+            durable_sessions = []
+
+    requested = None
+    if requested_date:
+        try:
+            requested = datetime.strptime(requested_date, "%Y-%m-%d").date()
+        except ValueError:
+            requested = None
+
+    today_ny = pd.Timestamp.now(tz=NY_TZ).date()
+    durable_fresh_today = False
+    if store_configured() and not durable.empty:
+        try:
+            durable_fresh_today = latest_fetch_day(symbol, interval) == today_ny
+        except Exception:
+            durable_fresh_today = False
+
+    if not refresh and not durable.empty:
+        if requested is not None and requested in durable_sessions:
+            return durable, "Supabase durable market store"
+        if requested is None and durable_fresh_today:
+            return durable, "Supabase durable market store"
+
+    fetched = ensure_symbol(symbol, interval, _period(interval), refresh=True if (refresh or durable.empty or requested not in durable_sessions) else False)
+    if store_configured():
+        try:
+            save_durable_bars(symbol, interval, fetched)
+            combined = merge_cache(durable, fetched) if not durable.empty else fetched
+            return combined, "Supabase durable market store + Yahoo incremental refresh"
+        except Exception:
+            pass
+    return fetched, "ephemeral Vercel cache fallback"
 
 
 class handler(BaseHTTPRequestHandler):
@@ -109,7 +157,7 @@ class handler(BaseHTTPRequestHandler):
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "private, max-age=30")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -130,7 +178,7 @@ class handler(BaseHTTPRequestHandler):
             if phase not in {"decision", "outcome"}:
                 self._send(400, {"error": "Unsupported replay phase."}); return
 
-            raw = ensure_symbol(symbol, interval, _period(interval), refresh=refresh)
+            raw, cache_label = _load_market(symbol, interval, requested_date, refresh)
             available = session_dates(raw)
             if not available:
                 self._send(502, {"error": f"No regular-session market data available for {symbol}."}); return
@@ -149,6 +197,7 @@ class handler(BaseHTTPRequestHandler):
             params = _params(query)
             features = add_features(raw, params)
             candidate = best_case(features, session_date, params)
+            engine_review = decision_review(candidate, params.min_space_r)
             decision_frame, decision_time = _decision_frame(features, session_date, params, candidate)
 
             if phase == "decision":
@@ -166,10 +215,11 @@ class handler(BaseHTTPRequestHandler):
                 "interval": interval,
                 "sessionDate": session_date.isoformat(),
                 "caseRef": _case_ref(session_date, symbol),
-                "availableSessions": [d.isoformat() for d in available[-60:]],
+                "availableSessions": [d.isoformat() for d in available],
                 "phase": phase,
                 "decisionTime": _clean(decision_time),
                 "candidate": {key: _clean(value) for key, value in candidate.items()},
+                "engineReview": engine_review,
                 "outcome": None if outcome is None else {key: _clean(value) for key, value in outcome.items()},
                 "bars": _bars(chart_frame),
                 "parameters": {
@@ -182,7 +232,8 @@ class handler(BaseHTTPRequestHandler):
                     "openingWindowMinutes": params.opening_window_minutes, "premarketStartHour": params.premarket_start_hour,
                     "structureLookback": params.structure_lookback, "minSpaceR": params.min_space_r,
                 },
-                "cache": "ephemeral /tmp cache on Vercel",
+                "cache": cache_label,
+                "durableStoreConfigured": store_configured(),
             })
         except Exception as exc:
             self._send(500, {"error": f"Digital Oliver market engine failed: {exc}"})
