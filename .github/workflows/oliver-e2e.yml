@@ -1,6 +1,17 @@
-name: Digital Oliver production E2E
+name: Digital Oliver staging E2E
 
 on:
+  push:
+    branches: [staging]
+    paths:
+      - ".github/workflows/oliver-e2e.yml"
+      - "scripts/oliver_e2e.py"
+      - "api/**"
+      - "src/app/api/oliver-ai-health/**"
+      - "src/app/api/oliver-ai-review/**"
+      - "src/app/api/oliver-ai-rank/**"
+      - "src/components/digital-oliver-workspace*.tsx"
+      - "src/lib/digital-oliver.ts"
   workflow_dispatch:
 
 permissions:
@@ -8,13 +19,23 @@ permissions:
   deployments: read
 
 jobs:
-  production-e2e:
+  staging-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - name: Wait for matching Vercel production deployment
+      - name: Confirm bypass secret is configured
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          if [ -z "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
+            echo "VERCEL_AUTOMATION_BYPASS_SECRET is missing from GitHub Actions secrets"
+            exit 1
+          fi
+          echo "Vercel automation bypass secret is configured."
+
+      - name: Wait for matching Vercel preview deployment
         id: deployment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -40,29 +61,30 @@ jobs:
                   return json.load(res)
 
           base = f"https://api.github.com/repos/{repo}"
-          for attempt in range(72):
-              deployments = get(f"{base}/deployments?sha={sha}&environment=Production&per_page=20")
-              vercel = next((d for d in deployments if d.get("creator", {}).get("login") == "vercel[bot]"), None)
+          for attempt in range(90):
+              deployments = get(f"{base}/deployments?sha={sha}&per_page=30")
+              vercel = next((d for d in deployments if d.get("creator", {}).get("login") == "vercel[bot]" and d.get("environment") == "Preview"), None)
               if vercel:
                   statuses = get(vercel["statuses_url"])
                   if statuses:
                       latest = statuses[0]
                       state = latest.get("state")
                       url = latest.get("environment_url") or latest.get("target_url")
-                      print(f"Vercel deployment state={state} url={url}")
+                      print(f"Vercel preview state={state} url={url}")
                       if state == "success" and url:
                           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
                               fh.write(f"base_url={url.rstrip('/')}\n")
                           raise SystemExit(0)
                       if state in {"failure", "error", "inactive"}:
-                          raise SystemExit(f"Vercel deployment ended in {state}")
+                          raise SystemExit(f"Vercel preview ended in {state}")
+              else:
+                  print(f"Waiting for Vercel Preview deployment for {sha} (attempt {attempt + 1}/90)")
               time.sleep(10)
-          raise SystemExit("Timed out waiting for matching Vercel production deployment")
+          raise SystemExit("Timed out waiting for matching Vercel Preview deployment")
           PY
 
       - name: Run live market-to-AI-to-ranking smoke test
         env:
           BASE_URL: ${{ steps.deployment.outputs.base_url }}
-        run: |
-          echo "Note: Vercel deployment protection must allow automation for this external smoke test."
-          python scripts/oliver_e2e.py "$BASE_URL"
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: python scripts/oliver_e2e.py "$BASE_URL"
